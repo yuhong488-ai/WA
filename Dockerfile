@@ -11,6 +11,7 @@ RUN apt-get update \
         ca-certificates \
         chromium \
         fonts-noto-cjk \
+        gosu \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,10 +21,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --chown=node:node . .
-RUN mkdir -p /data && chown node:node /data
+RUN mkdir -p /data \
+    && chown node:node /data \
+    && install -m 755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-USER node
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
