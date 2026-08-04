@@ -324,8 +324,30 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
 const browserPath = findBrowser();
+const WWEBJS_AUTH_DIR = dataPath('wwebjs_auth');
+
+function clearChromiumProfileLocks() {
+    if (!fs.existsSync(WWEBJS_AUTH_DIR)) return;
+    const lockNames = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+    const pending = [WWEBJS_AUTH_DIR];
+    while (pending.length) {
+        const current = pending.pop();
+        let entries = [];
+        try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { continue; }
+        for (const entry of entries) {
+            const entryPath = path.join(current, entry.name);
+            if (lockNames.has(entry.name)) {
+                try { fs.unlinkSync(entryPath); } catch {}
+            } else if (entry.isDirectory()) {
+                pending.push(entryPath);
+            }
+        }
+    }
+}
+
+clearChromiumProfileLocks();
 const client = new Client({
-    authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID, dataPath: dataPath('wwebjs_auth') }),
+    authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID, dataPath: WWEBJS_AUTH_DIR }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-quic'],
@@ -425,6 +447,7 @@ async function getContactsWithCompatibilityFallback() {
 function initializeClient() {
     if (isInitializing || isReady) return;
     isInitializing = true;
+    clearChromiumProfileLocks();
     client.initialize().catch(async (e) => {
         const message = e?.message || String(e);
         fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] initialize failed: ${e?.stack || message}\n`);
