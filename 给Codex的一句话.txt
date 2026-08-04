@@ -1,0 +1,1 @@
+﻿请读取并执行这个 zip / 文件夹里的 AGENTS.md，帮我安装和验收 WhatsApp Sender。

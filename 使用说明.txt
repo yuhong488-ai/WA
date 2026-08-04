@@ -1,0 +1,41 @@
+====================================
+WhatsApp Sender / WhatsApp 群发工具
+====================================
+
+Windows 第一次使用
+1. 安装 Node.js LTS：打开 https://nodejs.org 下载并安装，一直 Next 即可。
+2. 解压这个 zip 文件，不要直接在 zip 里面运行。
+3. 双击「安装依赖.bat」，等待安装完成。
+4. 双击「start.vbs」启动。
+5. 浏览器打开 http://localhost:3000 后，用手机 WhatsApp 扫 QR 登录。
+
+Windows 以后每次使用
+- 双击「start.vbs」即可。
+- 如果想看运行窗口，可以双击「启动.bat」。
+
+Mac 第一次使用
+1. 安装 Node.js LTS：打开 https://nodejs.org 下载并安装。
+2. 解压这个 zip 文件。
+3. 打开 Terminal，进入解压后的文件夹。
+4. 执行：
+   chmod +x 安装依赖Mac.command 启动Mac.command
+5. 双击「安装依赖Mac.command」，等待安装完成。
+6. 双击「启动Mac.command」启动。
+
+手机访问
+- 电脑和手机连接同一个 WiFi。
+- 工具页面顶部会显示手机访问地址。
+- 手机浏览器打开那个地址即可。
+
+AI 写文案
+- 没有 Codex CLI 也可以使用群发功能。
+- 如果要用 AI 写文案，可以在网页设置里选择 Claude、OpenAI、Gemini 或 DeepSeek，并填入自己的 API Key。
+- 如果电脑已经安装并登录 Codex CLI，可以选择 Codex CLI，不需要另外填 API Key。
+
+注意
+- 使用时电脑必须保持开机，浏览器页面不要关闭太快。
+- 建议每天发送量不要太高，例如 50 条以内。
+- 第一次连接 WhatsApp 可能需要等 1 到 2 分钟。
+- 这个安装包不会包含制作者的 WhatsApp 登录资料、API Key、群组缓存或上传文件。
+
+====================================

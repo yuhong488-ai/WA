@@ -1,0 +1,25 @@
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+.vercel/
+uploads/
+
+# Local credentials and user data
+config.json
+groups_cache.json
+presets.json
+schedules.json
+
+# Runtime files
+*.log
+error.log
+server.pid
+
+# Local-only launchers and OS files
+WhatsApp Sender.command
+.DS_Store
+
+# Environment files
+.env
+.env.*
+!.env.example

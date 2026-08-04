@@ -1,0 +1,252 @@
+﻿<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsApp 群发工具</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="header">
+  <h1>WhatsApp 群发工具</h1>
+  <div style="font-size:12px;color:rgba(255,255,255,0.8)">手机访问：<span id="localIP">加载中...</span></div>
+  <div id="statusBar" class="status disconnected">未连接</div>
+</div>
+
+<!-- QR Code -->
+<div id="qrSection" class="card">
+  <h2>扫码登录</h2>
+  <p>用手机打开 WhatsApp → 已连接的设备 → 连接设备 → 扫描下方二维码</p>
+  <div id="qrContainer"><div class="loading">正在生成二维码...</div></div>
+</div>
+
+<!-- Main App -->
+<div id="mainApp" style="display:none">
+
+  <div class="stats-bar">
+    <span>今日已发：<b id="todayCount">0</b> 条</span>
+    <span>每日上限：<b id="dailyLimit">50</b> 条</span>
+    <span>剩余：<b id="remaining">50</b> 条</span>
+    <span>群组总数：<b id="groupCount">0</b> 个</span>
+  </div>
+
+  <!-- Step 1: Message -->
+  <div class="card">
+    <h2>第一步：写消息</h2>
+
+    <!-- AI Compose -->
+    <div id="aiSection" class="ai-box">
+      <div class="ai-header">
+        <span>✨ AI 帮我写</span>
+        <span id="aiStatus" class="ai-status"></span>
+        <button id="aiDisconnectBtn" onclick="disconnectAI()" style="display:none;padding:3px 10px;font-size:12px;border:1px solid #ccc;border-radius:12px;background:#fff;color:#888;cursor:pointer;margin-left:6px">断开</button>
+      </div>
+      <div id="aiSetup" style="display:none" class="ai-setup">
+        <select id="aiProvider" onchange="updateProviderUI()" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd">
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="gemini">Gemini (Google)</option>
+          <option value="openai">OpenAI (ChatGPT)</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="codex">Codex CLI</option>
+        </select>
+        <input type="text" id="apiKeyInput" placeholder="填入 Claude API Key">
+        <button id="aiSaveBtn" class="btn-primary" style="padding:8px 14px" onclick="saveApiKey()">保存</button>
+        <a id="aiKeyLink" href="https://console.anthropic.com" target="_blank" class="ai-link">去获取 API Key</a>
+      </div>
+      <div id="aiCompose">
+        <textarea id="aiPrompt" placeholder="简单说你想通知什么，例如：明天下午2点家长会，请家长准时出席，语气温馨一点" rows="2"></textarea>
+        <div class="ai-options">
+          <select id="aiTone">
+            <option value="友善专业">友善专业</option>
+            <option value="正式">正式</option>
+            <option value="轻松">轻松</option>
+            <option value="温馨">温馨</option>
+          </select>
+          <select id="aiLang">
+            <option value="中文">中文</option>
+            <option value="英文">英文</option>
+            <option value="马来文">马来文</option>
+            <option value="中英夹杂">中英夹杂</option>
+          </select>
+          <button class="btn-ai" onclick="composeWithAI()" id="aiBtn">生成消息</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="template-hint">用 <code>{名字}</code> 代表每个人的称呼，系统会自动替换</div>
+    <textarea id="messageInput" placeholder="例如：{名字}，本周表现很好！明天上午9点开会，请准时参加。" rows="4"></textarea>
+    <div class="btn-row">
+      <button class="btn-outline" onclick="insertName()">插入 {名字}</button>
+      <button class="btn-outline" onclick="document.getElementById('mediaInput').click()">上传图片/视频/PDF/音频</button>
+      <input type="file" id="mediaInput" accept="image/*,video/*,audio/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.mp3,.wav,.m4a,.aac,.ogg,.opus" multiple style="display:none" onchange="uploadMedia(this)">
+      <button class="btn-record" id="recordBtn" onclick="toggleRecording()">🎤 录音</button>
+      <select id="voiceMode" class="voice-mode-select" title="语音发送方式">
+        <option value="audio">MP3</option>
+        <option value="voice">泡泡</option>
+      </select>
+    </div>
+    <div id="recordingStatus" style="display:none">
+      <span class="rec-dot"></span>
+      <span id="recordingTimer">0:00</span>
+      <button class="btn-remove" onclick="cancelRecording()">取消</button>
+    </div>
+    <div class="paste-hint">或直接 <b>Ctrl+V</b> 粘贴图片，可连续粘贴多张</div>
+    <div id="mediaPreview" style="display:none" class="media-preview">
+      <img id="mediaThumb" style="height:50px;border-radius:4px;display:none">
+      <span id="mediaName"></span>
+      <button class="btn-remove" onclick="removeMedia()">移除</button>
+    </div>
+    <div id="voicePreview" style="display:none" class="media-preview">
+      <span id="voiceName"></span>
+      <audio id="recordAudio" controls style="height:32px;max-width:220px;display:none"></audio>
+      <button class="btn-remove" onclick="removeVoice()">移除</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Recipients -->
+  <div class="card">
+    <h2>第二步：选择发送对象</h2>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('paste')">粘贴名字</button>
+      <button class="tab" onclick="switchTab('browse')">全部群组</button>
+      <button class="tab" onclick="switchTab('community')">按社群</button>
+      <button class="tab" onclick="switchTab('label')">按标签</button>
+      <button class="tab" onclick="switchTab('contacts')">个人联系人</button>
+      <button class="tab" onclick="switchTab('phones')">电话号码</button>
+    </div>
+
+    <!-- Paste Names Tab -->
+    <div id="pasteTab">
+      <p class="hint">粘贴名字（用逗号或换行分隔），系统自动找到对应群组</p>
+      <textarea id="namesInput" placeholder="例如：&#10;黄小米&#10;刘小丽&#10;陈大明&#10;&#10;或者：黄小米, 刘小丽, 陈大明" rows="5"></textarea>
+      <button class="btn-primary" onclick="matchNames()">匹配群组</button>
+
+      <div id="matchResults"></div>
+    </div>
+
+    <!-- Community Tab -->
+    <div id="communityTab" style="display:none">
+      <div id="communityList"></div>
+    </div>
+
+    <!-- Label Tab -->
+    <div id="labelTab" style="display:none">
+      <div id="labelList"></div>
+    </div>
+
+    <!-- Contacts Tab -->
+    <div id="contactsTab" style="display:none">
+      <div class="search-row">
+        <input type="text" id="contactSearch" placeholder="搜索联系人姓名..." oninput="filterContacts()">
+        <button class="btn-outline" onclick="selectAllContacts()">全选</button>
+        <button class="btn-outline" onclick="clearAllContacts()">清除</button>
+      </div>
+      <div id="contactsList" class="groups-list"></div>
+    </div>
+
+    <!-- Phone Numbers Tab -->
+    <div id="phonesTab" style="display:none">
+      <p class="hint">直接粘贴电话号码，一个号码一行或用逗号分隔。系统会先检查哪些号码有 WhatsApp。</p>
+      <div class="search-row">
+        <select id="phoneCountry" class="phone-country">
+          <option value="60">马来西亚 +60</option>
+          <option value="65">新加坡 +65</option>
+        </select>
+        <button class="btn-primary" id="checkPhonesBtn" onclick="checkPhones()">检查号码</button>
+        <button class="btn-outline" onclick="clearPhoneResults()">清空</button>
+      </div>
+      <textarea id="phoneInput" placeholder="例如：&#10;011-6199 3654&#10;+65 9123 4567&#10;60123456789" rows="5"></textarea>
+      <div id="phoneResults" class="phone-results"></div>
+    </div>
+    <!-- Browse Groups Tab -->
+    <div id="browseTab" style="display:none">
+      <div class="search-row">
+        <input type="text" id="groupSearch" placeholder="搜索群组名称..." oninput="filterGroups()">
+        <button class="btn-outline" onclick="selectAll()">全选</button>
+        <button class="btn-outline" onclick="clearAll()">清除</button>
+        <button class="btn-outline" id="refreshBtn" onclick="refreshGroups()" style="color:#128C7E;border-color:#128C7E">刷新群组</button>
+      </div>
+      <div id="groupsList" class="groups-list"></div>
+    </div>
+  </div>
+
+  <!-- Step 3: Preview & Send -->
+  <div class="card">
+    <h2>第三步：预览并发送</h2>
+
+    <div class="settings-row">
+      <label>发送间隔：
+        <select id="delayMin">
+          <option value="3">3秒</option>
+          <option value="5" selected>5秒</option>
+          <option value="10">10秒</option>
+        </select>
+        ~
+        <select id="delayMax">
+          <option value="7">7秒</option>
+          <option value="10" selected>10秒</option>
+          <option value="15">15秒</option>
+          <option value="20">20秒</option>
+        </select>
+      </label>
+      <label>每日上限：
+        <input type="number" id="limitInput" value="50" min="1" max="100" style="width:60px"> 条
+      </label>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span id="targetCount" style="font-size:13px;color:#888"></span>
+      <button class="btn-outline" id="clearAllBtn" onclick="clearAllTargets()" style="display:none;color:red;border-color:red;padding:4px 12px;font-size:12px">清空全部</button>
+    </div>
+    <div id="previewList" class="preview-list"></div>
+    <div id="noTargets" class="empty-hint">还没有选择发送对象</div>
+
+    <!-- Presets -->
+    <div class="preset-box">
+      <div class="preset-header">
+        <span>⭐ 常用组合</span>
+        <button class="btn-outline" style="padding:4px 12px;font-size:12px" onclick="savePreset()">保存当前选择</button>
+      </div>
+      <div id="presetList" class="preset-list"><span class="empty-hint" style="padding:8px 0">还没有保存的组合</span></div>
+    </div>
+
+    <!-- Send Mode -->
+    <div class="send-mode-row">
+      <button class="mode-btn active" id="modeNow" onclick="setMode('now')">立即发送</button>
+      <button class="mode-btn" id="modeSched" onclick="setMode('schedule')">定时发送</button>
+    </div>
+
+    <div id="scheduleOptions" style="display:none" class="schedule-options">
+      <div class="schedule-row">
+        <input type="date" id="scheduleDate">
+        <input type="time" id="scheduleTime" value="17:00">
+        <input type="text" id="scheduleName" placeholder="任务名称（选填）" style="flex:1;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:14px">
+      </div>
+    </div>
+
+    <button class="btn-send" id="sendBtn" onclick="startSend()" disabled>立即发送</button>
+    <button class="btn-send btn-stop-send" id="stopBtn" onclick="stopSend()" style="display:none">停止发送</button>
+    <button class="btn-send" id="scheduleBtn" onclick="createSchedule()" style="display:none;background:#FF9800;margin-top:8px">设定定时发送</button>
+
+    <!-- Progress -->
+    <div id="progressSection" style="display:none">
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progressBar" style="width:0%"></div>
+      </div>
+      <div id="progressLog" class="progress-log"></div>
+    </div>
+  </div>
+
+  <!-- Scheduled Tasks -->
+  <div class="card" id="scheduledCard" style="display:none">
+    <h2>⏰ 定时任务</h2>
+    <div id="scheduleList"></div>
+  </div>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js?v=20260723"></script>
+</body>
+</html>

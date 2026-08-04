@@ -1,0 +1,8 @@
+{
+  "port": 3000,
+  "anthropicApiKey": "",
+  "openaiApiKey": "",
+  "geminiApiKey": "",
+  "whatsappClientId": "codex",
+  "aiProvider": "codex"
+}

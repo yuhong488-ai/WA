@@ -1,0 +1,14 @@
+node_modules
+.wwebjs_auth
+.wwebjs_cache
+uploads
+config.json
+groups_cache.json
+presets.json
+schedules.json
+*.log
+server.pid
+*.command
+*.bat
+*.vbs
+AGENTS.md
