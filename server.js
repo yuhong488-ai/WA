@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const Anthropic = require('@anthropic-ai/sdk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -16,16 +17,43 @@ const ffmpegPath = require('ffmpeg-static');
 const ffmpeg = require('fluent-ffmpeg');
 const { parsePhoneNumbers } = require('./phone-utils');
 
-const config = fs.existsSync('./config.json') ? JSON.parse(fs.readFileSync('./config.json', 'utf8').replace(/^\uFEFF/, '')) : {};
+const DATA_DIR = path.resolve(process.env.DATA_DIR || __dirname);
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function dataPath(filename) { return path.join(DATA_DIR, filename); }
+function readJson(filename, fallback) {
+    try {
+        const value = fs.readFileSync(dataPath(filename), 'utf8').replace(/^\uFEFF/, '');
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
+}
+
+const config = readJson('config.json', {});
+const envConfig = {
+    aiProvider: process.env.AI_PROVIDER,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY,
+    codexCliPath: process.env.CODEX_CLI_PATH,
+    whatsappClientId: process.env.WHATSAPP_CLIENT_ID
+};
+for (const [key, value] of Object.entries(envConfig)) {
+    if (value) config[key] = value;
+}
 const PORT = Number(process.env.PORT || config.port || 3000);
+const HOST = process.env.HOST || '127.0.0.1';
 const WA_CLIENT_ID = config.whatsappClientId || 'codex';
+const ERROR_LOG = dataPath('error.log');
 
 process.on('uncaughtException', (e) => {
-    fs.appendFileSync('./error.log', `[${new Date().toISOString()}] uncaughtException: ${e.stack}\n`);
+    fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] uncaughtException: ${e.stack}\n`);
     console.error('\u672a\u6355\u83b7\u9519\u8bef\uff08server\u7ee7\u7eed\u8fd0\u884c\uff09\uff1a', e.message);
 });
 process.on('unhandledRejection', (e) => {
-    fs.appendFileSync('./error.log', `[${new Date().toISOString()}] unhandledRejection: ${e}\n`);
+    fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] unhandledRejection: ${e}\n`);
     console.error('\u672a\u5904\u7406\u7684Promise\u9519\u8bef\uff08server\u7ee7\u7eed\u8fd0\u884c\uff09\uff1a', e);
 });
 
@@ -34,6 +62,8 @@ function findBrowser() {
     const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
     const local = process.env['LOCALAPPDATA'] || '';
     const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH || '',
+        process.env.CHROME_PATH || '',
         `${pf}\\Google\\Chrome\\Application\\chrome.exe`,
         `${pf86}\\Google\\Chrome\\Application\\chrome.exe`,
         local ? `${local}\\Google\\Chrome\\Application\\chrome.exe` : '',
@@ -43,6 +73,8 @@ function findBrowser() {
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
         '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
     ].filter(Boolean);
     for (const p of candidates) {
         if (fs.existsSync(p)) {
@@ -146,10 +178,10 @@ function initAI() {
 }
 initAI();
 
-let schedules = fs.existsSync('./schedules.json') ? JSON.parse(fs.readFileSync('./schedules.json')) : [];
-let presets = fs.existsSync('./presets.json') ? JSON.parse(fs.readFileSync('./presets.json')) : [];
+let schedules = readJson('schedules.json', []);
+let presets = readJson('presets.json', []);
 
-function saveSchedules() { fs.writeFileSync('./schedules.json', JSON.stringify(schedules, null, 2)); }
+function saveSchedules() { fs.writeFileSync(dataPath('schedules.json'), JSON.stringify(schedules, null, 2)); }
 
 function convertToOgg(inputPath) {
     return new Promise((resolve, reject) => {
@@ -213,17 +245,53 @@ async function sendVoiceByMode(target, filePath, mode, prefix = '') {
         console.log(`  \uD83C\uDFA4 ${prefix}\u8bed\u97f3\u6ce1\u6ce1\u5df2\u4e0a\u4f20\uff1a${target.name} ${sentVoice?.id?._serialized || ''}`);
     }
 }
-function savePresets() { fs.writeFileSync('./presets.json', JSON.stringify(presets, null, 2)); }
-function saveGroupsCache() { fs.writeFileSync('./groups_cache.json', JSON.stringify({ groups, contacts, labels, communities }, null, 2)); }
+function savePresets() { fs.writeFileSync(dataPath('presets.json'), JSON.stringify(presets, null, 2)); }
+function saveGroupsCache() { fs.writeFileSync(dataPath('groups_cache.json'), JSON.stringify({ groups, contacts, labels, communities }, null, 2)); }
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const APP_USERNAME = process.env.APP_USERNAME || 'admin';
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+
+function safeEqual(left, right) {
+    const a = Buffer.from(String(left));
+    const b = Buffer.from(String(right));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function isAuthorized(req) {
+    if (!APP_PASSWORD) return true;
+    const authorization = req.headers.authorization || '';
+    if (!authorization.startsWith('Basic ')) return false;
+    try {
+        const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
+        const separator = decoded.indexOf(':');
+        if (separator < 0) return false;
+        return safeEqual(decoded.slice(0, separator), APP_USERNAME)
+            && safeEqual(decoded.slice(separator + 1), APP_PASSWORD);
+    } catch {
+        return false;
+    }
+}
+
+const io = new Server(server, {
+    allowRequest: (req, callback) => callback(null, isAuthorized(req))
+});
 
 app.use(express.json());
+app.get('/api/health', (req, res) => res.json({
+    ok: true,
+    whatsappConnected: isReady,
+    groupCount: groups.length
+}));
+app.use((req, res, next) => {
+    if (isAuthorized(req)) return next();
+    res.set('WWW-Authenticate', 'Basic realm="WhatsApp Sender", charset="UTF-8"');
+    return res.status(401).send('需要登录 WhatsApp Sender');
+});
 app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
-const groupsCache = fs.existsSync('./groups_cache.json') ? JSON.parse(fs.readFileSync('./groups_cache.json')) : null;
+const groupsCache = readJson('groups_cache.json', null);
 
 io.on('connection', (socket) => {
     if (isReady) {
@@ -246,8 +314,8 @@ io.on('connection', (socket) => {
     }
 });
 
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const uploadDir = dataPath('uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
@@ -257,7 +325,7 @@ const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
 const browserPath = findBrowser();
 const client = new Client({
-    authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID }),
+    authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID, dataPath: dataPath('wwebjs_auth') }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-quic'],
@@ -359,7 +427,7 @@ function initializeClient() {
     isInitializing = true;
     client.initialize().catch(async (e) => {
         const message = e?.message || String(e);
-        fs.appendFileSync('./error.log', `[${new Date().toISOString()}] initialize failed: ${e?.stack || message}\n`);
+        fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] initialize failed: ${e?.stack || message}\n`);
         console.error('WhatsApp 初始化失败，15 秒后重试：', message);
         io.emit('status', { connected: false, message: 'WhatsApp 连接失败，正在自动重试...' });
         await cleanupClientAfterFailure();
@@ -552,7 +620,7 @@ async function handleClientReady() {
         console.log('\u7fa4\u7ec4\u7f13\u5b58\u5df2\u4fdd\u5b58');
 
     } catch (e) {
-        fs.appendFileSync('./error.log', `[${new Date().toISOString()}] ready load failed: ${e?.stack || e?.message || String(e)}\n`);
+        fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] ready load failed: ${e?.stack || e?.message || String(e)}\n`);
         console.error('\u8f7d\u5165\u5931\u8d25\uff0c\u4f7f\u7528\u4e0a\u6b21\u7fa4\u7ec4\u7f13\u5b58\uff1a', e.message);
         if (groupsCache?.groups?.length) {
             groups = groupsCache.groups || [];
@@ -662,7 +730,7 @@ app.post('/api/save-config', (req, res) => {
     setOrDel('openaiApiKey', openaiApiKey);
     setOrDel('deepseekApiKey', deepseekApiKey);
     if (aiProvider !== undefined) config.aiProvider = aiProvider || undefined;
-    fs.writeFileSync('./config.json', JSON.stringify(config, null, 2));
+    fs.writeFileSync(dataPath('config.json'), JSON.stringify(config, null, 2));
     initAI();
     res.json({ success: true });
 });
@@ -834,7 +902,7 @@ app.post('/api/send', async (req, res) => {
                     io.emit('sendProgress', { index: i + 1, total: actualTargets.length, name: target.name, success: true, todayCount: getTodayCount() });
                 } catch (e) {
                     const errMsg = e?.message || String(e);
-                    fs.appendFileSync('./error.log', `[${new Date().toISOString()}] sendMessage failed: ${e?.stack || errMsg}\n`);
+                    fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] sendMessage failed: ${e?.stack || errMsg}\n`);
                     io.emit('sendProgress', { index: i + 1, total: actualTargets.length, name: target.name, success: false, error: errMsg });
                     if (isWhatsAppPageError(e)) {
                         stopSendingRequested = true;
@@ -982,8 +1050,31 @@ cron.schedule('* * * * *', async () => {
     }
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(`打开浏览器访问：http://localhost:${PORT}`));
-initializeClient();
+if ((HOST === '0.0.0.0' || HOST === '::') && !APP_PASSWORD && process.env.ALLOW_INSECURE_PUBLIC !== 'true') {
+    console.error('拒绝公开启动：请先设置 APP_PASSWORD，或明确设置 ALLOW_INSECURE_PUBLIC=true。');
+    process.exit(1);
+}
+
+server.listen(PORT, HOST, () => {
+    const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+    console.log(`打开浏览器访问：http://${displayHost}:${PORT}`);
+    console.log(`数据目录：${DATA_DIR}`);
+});
+
+if (process.env.DISABLE_WHATSAPP !== 'true') initializeClient();
+
+let shuttingDown = false;
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal}：正在安全关闭 WhatsApp Sender...`);
+    const forceExit = setTimeout(() => process.exit(1), 10000);
+    forceExit.unref();
+    try { await client.destroy(); } catch {}
+    server.close(() => process.exit(0));
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
 
 
 
