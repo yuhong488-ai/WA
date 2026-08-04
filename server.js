@@ -508,7 +508,11 @@ async function sendWithTimeout(targetId, content, options = {}) {
 }
 
 client.on('qr', async (qr) => {
-    const qrImage = await QRCode.toDataURL(qr);
+    const qrImage = await QRCode.toDataURL(qr, {
+        width: 480,
+        margin: 4,
+        errorCorrectionLevel: 'M'
+    });
     lastQrImage = qrImage;
     io.emit('qr', qrImage);
 });
@@ -785,6 +789,27 @@ app.get('/api/status', (req, res) => {
 
 app.get('/api/qr', (req, res) => {
     res.json({ qr: lastQrImage });
+});
+
+app.post('/api/pairing-code', async (req, res) => {
+    if (isReady) return res.status(400).json({ error: 'WhatsApp 已连接，无需生成连接码' });
+    const phoneNumber = String(req.body?.phoneNumber || '').replace(/\D/g, '');
+    if (!/^\d{8,15}$/.test(phoneNumber)) {
+        return res.status(400).json({ error: '请输入含国家代码的手机号，例如 60123456789' });
+    }
+    if (!client.pupPage) {
+        return res.status(503).json({ error: 'WhatsApp 正在启动，请稍后再试' });
+    }
+    try {
+        const code = await withTimeout(
+            client.requestPairingCode(phoneNumber, true, 180000),
+            30000,
+            '生成连接码'
+        );
+        res.json({ code });
+    } catch (error) {
+        res.status(500).json({ error: '生成连接码失败：' + (error?.message || String(error)) });
+    }
 });
 
 app.get('/api/groups', (req, res) => res.json(groups));

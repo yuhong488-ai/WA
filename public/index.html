@@ -19,6 +19,18 @@
   <h2>扫码登录</h2>
   <p>用手机打开 WhatsApp → 已连接的设备 → 连接设备 → 扫描下方二维码</p>
   <div id="qrContainer"><div class="loading">正在生成二维码...</div></div>
+  <div class="pairing-box">
+    <button class="btn-outline" type="button" onclick="togglePairingBox()">无法扫码？改用手机号连接</button>
+    <div id="pairingForm" style="display:none">
+      <p>输入含国家代码的 WhatsApp 手机号（马来西亚例如 60123456789，不要输入 +、空格或横线）</p>
+      <div class="pairing-row">
+        <input id="pairingPhone" type="tel" inputmode="numeric" placeholder="60123456789">
+        <button id="pairingBtn" class="btn-primary" type="button" onclick="requestPairingCode()">生成连接码</button>
+      </div>
+      <div id="pairingResult" class="pairing-result"></div>
+      <p id="pairingHelp" style="display:none">手机 WhatsApp → 已连接的设备 → 连接设备 → 使用手机号连接，然后输入上面的 8 位码。</p>
+    </div>
+  </div>
 </div>
 
 <!-- Main App -->

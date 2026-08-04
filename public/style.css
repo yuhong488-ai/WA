@@ -15,7 +15,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 #qrSection { text-align: center; }
 #qrSection p { color: #666; font-size: 14px; margin-bottom: 16px; }
-#qrContainer img { max-width: 260px; border: 2px solid #eee; border-radius: 8px; }
+#qrContainer img { width: min(420px, 100%); border: 2px solid #eee; border-radius: 8px; image-rendering: pixelated; }
+.pairing-box { margin-top: 18px; }
+.pairing-box p { margin: 10px auto; max-width: 560px; }
+.pairing-row { display: flex; gap: 8px; justify-content: center; max-width: 520px; margin: 0 auto; }
+.pairing-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; }
+.pairing-result { margin: 14px 0 4px; font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #128c7e; }
 .loading { color: #999; padding: 40px; }
 
 textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 14px; resize: vertical; font-family: inherit; }

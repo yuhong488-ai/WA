@@ -41,6 +41,35 @@ socket.on('qr', (qrImage) => {
     document.getElementById('qrContainer').innerHTML = `<img src="${qrImage}" alt="QR Code">`;
 });
 
+function togglePairingBox() {
+    const form = document.getElementById('pairingForm');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function requestPairingCode() {
+    const phoneNumber = document.getElementById('pairingPhone').value.trim();
+    const button = document.getElementById('pairingBtn');
+    const result = document.getElementById('pairingResult');
+    button.disabled = true;
+    result.textContent = '正在生成...';
+    try {
+        const response = await fetch('/api/pairing-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phoneNumber })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '生成失败');
+        result.textContent = String(data.code || '').replace(/(.{4})/g, '$1 ').trim();
+        document.getElementById('pairingHelp').style.display = 'block';
+    } catch (error) {
+        result.textContent = error.message;
+        document.getElementById('pairingHelp').style.display = 'none';
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function loadLatestQr() {
     try {
         const res = await fetch('/api/qr');
