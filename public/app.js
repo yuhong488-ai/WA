@@ -7,6 +7,7 @@ let selectedTargets = [];
 let uploadedFiles = [];
 let voiceFile = null;
 let isSending = false;
+let wasConnected = false;
 
 const FAMILY_NAMES = new Set('刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆'.split(''));
 const _FAMILY_RE = /[刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆][\u4e00-\u9fff]{1,2}/g;
@@ -40,6 +41,8 @@ function extractDisplayName(groupName) {
 socket.on('qr', (qrImage) => {
     document.getElementById('qrContainer').innerHTML = `<img src="${qrImage}" alt="QR Code">`;
     document.getElementById('refreshQrBtn').disabled = false;
+    document.getElementById('qrSection').style.display = 'block';
+    document.getElementById('mainApp').style.display = 'none';
 });
 
 async function refreshQrNow() {
@@ -123,14 +126,24 @@ async function loadLatestQr() {
 function applyConnectionStatus(data) {
     const bar = document.getElementById('statusBar');
     if (data.connected) {
+        wasConnected = true;
         bar.textContent = `已连接 ✓  ${data.groupCount} 个群组`;
         bar.className = 'status connected';
         document.getElementById('qrSection').style.display = 'none';
         document.getElementById('mainApp').style.display = 'block';
         document.getElementById('groupCount').textContent = data.groupCount;
+        renderPreview();
         updateDailyStats();
         initAI();
         loadPresets();
+    } else if (wasConnected) {
+        bar.textContent = data.message || 'WhatsApp 正在恢复连接，请稍候...';
+        bar.className = 'status disconnected';
+        document.getElementById('qrSection').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'block';
+        const sendBtn = document.getElementById('sendBtn');
+        sendBtn.disabled = true;
+        if (!isSending) sendBtn.textContent = '等待 WhatsApp 恢复...';
     } else {
         bar.textContent = data.message || '未连接';
         bar.className = 'status disconnected';
