@@ -470,6 +470,10 @@ async function getContactsWithCompatibilityFallback() {
 
 function initializeClient() {
     if (isInitializing || isReady) return;
+    if (client.pupBrowser?.connected && client.pupPage && !client.pupPage.isClosed()) {
+        console.log('WhatsApp 隐藏浏览器仍在运行，不重复启动');
+        return;
+    }
     isInitializing = true;
     clearChromiumProfileLocks();
     client.initialize().catch(async (e) => {
@@ -771,9 +775,8 @@ setInterval(async () => {
 
 client.on('disconnected', (reason) => {
     isReady = false;
-    console.log('\u5df2\u65ad\u5f00\uff0c5\u79d2\u540e\u81ea\u52a8\u91cd\u8fde...');
-    io.emit('status', { connected: false, message: '\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u91cd\u8fde...' });
-    setTimeout(initializeClient, 5000);
+    console.log(`WhatsApp 已断开（${reason || '未知原因'}），保留当前隐藏浏览器等待恢复`);
+    io.emit('status', { connected: false, message: 'WhatsApp 暂时断开，正在等待恢复...' });
 });
 
 app.post('/api/compose', async (req, res) => {
