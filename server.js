@@ -246,7 +246,13 @@ async function sendVoiceByMode(target, filePath, mode, prefix = '') {
     }
 }
 function savePresets() { fs.writeFileSync(dataPath('presets.json'), JSON.stringify(presets, null, 2)); }
-function saveGroupsCache() { fs.writeFileSync(dataPath('groups_cache.json'), JSON.stringify({ groups, contacts, labels, communities }, null, 2)); }
+function saveGroupsCache() {
+    if (!groups.length) {
+        console.log('群组为空，不覆盖已有群组缓存');
+        return;
+    }
+    fs.writeFileSync(dataPath('groups_cache.json'), JSON.stringify({ groups, contacts, labels, communities }, null, 2));
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -418,6 +424,24 @@ async function getChatsWithCompatibilityFallback() {
     }
 }
 
+async function getChatsAfterSync(maxAttempts = 6) {
+    let chats = [];
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            chats = await getChatsWithCompatibilityFallback();
+            if (chats.length) return chats;
+            console.log(`WhatsApp 已连接但对话尚未同步（${attempt}/${maxAttempts}），5 秒后重试...`);
+        } catch (error) {
+            lastError = error;
+            console.log(`读取对话失败（${attempt}/${maxAttempts}）：${error?.message || String(error)}`);
+        }
+        if (attempt < maxAttempts) await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+    if (lastError && !chats.length) throw lastError;
+    return chats;
+}
+
 async function getContactsWithCompatibilityFallback() {
     return client.pupPage.evaluate(() => {
         const contactCollection = window.require('WAWebCollections').Contact;
@@ -559,13 +583,34 @@ client.on('ready', handleClientReady);
 
 async function handleClientReady() {
     if (isReady) return;
+    const previousGroups = groups;
+    const previousContacts = contacts;
+    const previousLabels = labels;
+    const previousCommunities = communities;
     isReady = true;
     lastQrImage = null;
     io.emit('status', { connected: true, groupCount: 0 });
     console.log('\u5df2\u8fde\u63a5\uff01\u6b63\u5728\u8f7d\u5165\u7fa4\u7ec4...');
     try {
-        const chats = await getChatsWithCompatibilityFallback();
+        const chats = await getChatsAfterSync();
         console.log(`getChats \u8fd4\u56de ${chats.length} \u4e2a\u5bf9\u8bdd`);
+        if (!chats.length) {
+            const cachedGroups = previousGroups.length ? previousGroups : (groupsCache?.groups || []);
+            if (cachedGroups.length) {
+                groups = cachedGroups;
+                contacts = previousContacts.length ? previousContacts : (groupsCache?.contacts || []);
+                labels = previousLabels.length ? previousLabels : (groupsCache?.labels || []);
+                communities = Object.keys(previousCommunities).length ? previousCommunities : (groupsCache?.communities || {});
+                io.emit('status', { connected: true, groupCount: groups.length, message: '已连接，等待 WhatsApp 完成同步' });
+                io.emit('groups', groups);
+                io.emit('contacts', contacts);
+                io.emit('labels', labels);
+                io.emit('communities', Object.values(communities));
+                console.log(`本次对话为空，保留 ${groups.length} 个已有群组`);
+                return;
+            }
+            throw new Error('WhatsApp 已连接但对话仍未同步');
+        }
         groups = chats
             .filter(c => (c.isGroup || c.id?._serialized?.endsWith('@g.us')) && !c.groupMetadata?.isParentGroup && !c.groupMetadata?.isCommunity)
             .map(g => ({
@@ -726,8 +771,6 @@ setInterval(async () => {
 
 client.on('disconnected', (reason) => {
     isReady = false;
-    groups = [];
-    contacts = [];
     console.log('\u5df2\u65ad\u5f00\uff0c5\u79d2\u540e\u81ea\u52a8\u91cd\u8fde...');
     io.emit('status', { connected: false, message: '\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u91cd\u8fde...' });
     setTimeout(initializeClient, 5000);
