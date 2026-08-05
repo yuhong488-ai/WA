@@ -377,6 +377,24 @@ let contactStats = {};
 let isInitializing = false;
 let isRecoveringClient = false;
 let isLoggingOut = false;
+let authWaitTimer = null;
+
+function clearAuthWaitTimer() {
+    if (authWaitTimer) clearTimeout(authWaitTimer);
+    authWaitTimer = null;
+}
+
+function scheduleAuthRecovery() {
+    clearAuthWaitTimer();
+    authWaitTimer = setTimeout(() => {
+        authWaitTimer = null;
+        if (isReady || isLoggingOut) return;
+        // An authenticated event without a ready event means the hidden page
+        // is stuck after QR verification. Restart that client automatically.
+        isInitializing = false;
+        recoverDisconnectedClient('二维码验证成功后连接超时').catch(() => {});
+    }, 45000);
+}
 
 async function cleanupClientAfterFailure() {
     try {
@@ -626,6 +644,7 @@ async function sendWithTimeout(targetId, content, options = {}) {
 }
 
 client.on('qr', async (qr) => {
+    clearAuthWaitTimer();
     const qrImage = await QRCode.toDataURL(qr, {
         width: 480,
         margin: 4,
@@ -637,12 +656,14 @@ client.on('qr', async (qr) => {
 });
 
 client.on('authenticated', () => {
+    scheduleAuthRecovery();
     lastQrImage = null;
     qrGeneratedAt = null;
     io.emit('status', { connected: false, message: '\u9a8c\u8bc1\u6210\u529f\uff0c\u6b63\u5728\u8fde\u63a5...' });
 });
 
 client.on('auth_failure', (message) => {
+    clearAuthWaitTimer();
     isReady = false;
     lastQrImage = null;
     qrGeneratedAt = null;
@@ -663,6 +684,7 @@ client.on('ready', handleClientReady);
 
 async function handleClientReady() {
     if (isReady || isLoggingOut) return;
+    clearAuthWaitTimer();
     const previousGroups = groups;
     const previousContacts = contacts;
     const previousLabels = labels;
@@ -859,6 +881,7 @@ setInterval(async () => {
 }, 5000);
 
 client.on('disconnected', (reason) => {
+    clearAuthWaitTimer();
     if (isLoggingOut) return;
     isReady = false;
     console.log(`WhatsApp 已断开（${reason || '未知原因'}），准备自动恢复`);
