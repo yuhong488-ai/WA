@@ -812,6 +812,21 @@ app.post('/api/pairing-code', async (req, res) => {
     }
 });
 
+app.post('/api/refresh-qr', async (req, res) => {
+    if (isReady) return res.json({ ok: true, connected: true });
+    if (!client.pupPage) {
+        return res.status(503).json({ error: 'WhatsApp 正在启动，请稍后再试' });
+    }
+    try {
+        lastQrImage = null;
+        await withTimeout(client.cancelPairingCode(), 30000, '刷新二维码');
+        io.emit('status', { connected: false, message: '正在生成新二维码...' });
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ error: '刷新二维码失败：' + (error?.message || String(error)) });
+    }
+});
+
 app.get('/api/groups', (req, res) => res.json(groups));
 app.get('/api/contacts', (req, res) => res.json(contacts));
 app.get('/api/contact-stats', (req, res) => res.json(contactStats));

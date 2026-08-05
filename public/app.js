@@ -39,7 +39,45 @@ function extractDisplayName(groupName) {
 // Socket events
 socket.on('qr', (qrImage) => {
     document.getElementById('qrContainer').innerHTML = `<img src="${qrImage}" alt="QR Code">`;
+    document.getElementById('refreshQrBtn').disabled = false;
 });
+
+async function refreshQrNow() {
+    const button = document.getElementById('refreshQrBtn');
+    const container = document.getElementById('qrContainer');
+    button.disabled = true;
+    container.innerHTML = '<div class="loading">正在刷新二维码...</div>';
+    try {
+        const response = await fetch('/api/refresh-qr', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '刷新失败');
+        let attempts = 0;
+        const timer = setInterval(async () => {
+            attempts++;
+            try {
+                const qrResponse = await fetch('/api/qr');
+                const qrData = await qrResponse.json();
+                if (qrData.qr) {
+                    clearInterval(timer);
+                    container.innerHTML = `<img src="${qrData.qr}" alt="QR Code">`;
+                    button.disabled = false;
+                } else if (attempts >= 20) {
+                    clearInterval(timer);
+                    container.innerHTML = '<div class="loading">二维码仍在生成，请再按一次刷新</div>';
+                    button.disabled = false;
+                }
+            } catch {
+                if (attempts >= 20) {
+                    clearInterval(timer);
+                    button.disabled = false;
+                }
+            }
+        }, 1000);
+    } catch (error) {
+        container.innerHTML = `<div class="loading">${error.message}</div>`;
+        button.disabled = false;
+    }
+}
 
 function togglePairingBox() {
     const form = document.getElementById('pairingForm');
