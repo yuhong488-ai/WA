@@ -9,6 +9,7 @@ let voiceFile = null;
 let isSending = false;
 let wasConnected = false;
 let qrPollTimer = null;
+let statusPollTimer = null;
 let qrWaitStartedAt = null;
 
 const FAMILY_NAMES = new Set('刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆'.split(''));
@@ -47,7 +48,7 @@ socket.on('qr', (qrImage) => {
     document.getElementById('mainApp').style.display = 'none';
     document.getElementById('logoutBtn').style.display = 'none';
     document.getElementById('resetSessionBtn').style.display = 'none';
-    document.getElementById('qrHint').textContent = '二维码已生成，请用手机 WhatsApp → 已连接的设备扫描。';
+    document.getElementById('qrHint').textContent = '二维码已生成。扫描后如果手机出现“设备名称”，请输入 Railway 群发工具并按“保存”。';
 });
 
 async function refreshQrNow() {
@@ -124,7 +125,7 @@ async function loadLatestQr() {
             document.getElementById('qrContainer').innerHTML = `<img src="${data.qr}" alt="QR Code">`;
             document.getElementById('refreshQrBtn').disabled = false;
             document.getElementById('resetSessionBtn').style.display = 'none';
-            document.getElementById('qrHint').textContent = '二维码已生成，请尽快扫描。';
+            document.getElementById('qrHint').textContent = '二维码已生成。扫描后如果手机出现“设备名称”，请输入 Railway 群发工具并按“保存”。';
         }
     } catch (e) {
         console.error('loadLatestQr error', e);
@@ -164,7 +165,9 @@ function applyConnectionStatus(data) {
         document.getElementById('mainApp').style.display = 'none';
         logoutBtn.style.display = 'none';
         if (!qrWaitStartedAt) qrWaitStartedAt = Date.now();
-        document.getElementById('qrHint').textContent = data.message || '正在连接 WhatsApp...';
+        document.getElementById('qrHint').textContent = data.hasQr
+            ? '二维码已生成。扫描后如果手机出现“设备名称”，请输入 Railway 群发工具并按“保存”。'
+            : (data.message || '正在连接 WhatsApp...');
         document.getElementById('resetSessionBtn').style.display = (Date.now() - qrWaitStartedAt > 90000 && !data.hasQr) ? 'inline-block' : 'none';
     }
 }
@@ -233,10 +236,28 @@ async function syncConnectionStatus() {
     }
 }
 
+async function pollConnectionStatus() {
+    try {
+        const response = await fetch('/api/status', { cache: 'no-store' });
+        const data = await response.json();
+        const wasAlreadyConnected = wasConnected;
+        applyConnectionStatus(data);
+        // Socket events can be interrupted by mobile Safari/Basic Auth. Load
+        // the initial data once when polling detects a newly ready session.
+        if (data.connected && !wasAlreadyConnected) syncConnectionStatus();
+    } catch (error) {
+        console.debug('pollConnectionStatus error', error);
+    }
+}
+
 if (!qrPollTimer) {
     qrPollTimer = setInterval(() => {
         if (!wasConnected) loadLatestQr();
     }, 2500);
+}
+
+if (!statusPollTimer) {
+    statusPollTimer = setInterval(pollConnectionStatus, 4000);
 }
 
 socket.on('status', applyConnectionStatus);
