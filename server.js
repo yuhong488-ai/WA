@@ -642,6 +642,23 @@ client.on('authenticated', () => {
     io.emit('status', { connected: false, message: '\u9a8c\u8bc1\u6210\u529f\uff0c\u6b63\u5728\u8fde\u63a5...' });
 });
 
+client.on('auth_failure', (message) => {
+    isReady = false;
+    lastQrImage = null;
+    qrGeneratedAt = null;
+    const detail = message || 'WhatsApp 登录验证失败';
+    console.error('WhatsApp 登录验证失败：', detail);
+    fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] auth_failure: ${detail}\n`);
+    io.emit('status', { connected: false, message: 'WhatsApp 登录验证失败，正在重新生成二维码...' });
+    // whatsapp-web.js stops after auth_failure; clear the invalid LocalAuth profile
+    // and initialize a clean QR flow instead of leaving the page stuck.
+    setTimeout(() => {
+        if (!isLoggingOut && !isReady) {
+            resetWhatsAppSession().catch((error) => console.error('清理失败登录资料失败：', error?.message || String(error)));
+        }
+    }, 2000);
+});
+
 client.on('ready', handleClientReady);
 
 async function handleClientReady() {
@@ -823,18 +840,22 @@ setInterval(async () => {
         return;
     }
     try {
-        const state = await client.pupPage.evaluate(() => {
+        const state = await withTimeout(client.pupPage.evaluate(() => {
             const socket = window.require?.('WAWebSocketModel')?.Socket;
             return {
                 connected: socket?.state === 'CONNECTED' && socket?.hasSynced === true,
                 injected: typeof window.WWebJS !== 'undefined'
             };
-        });
+        }), 8000, '检查 WhatsApp 页面');
         if (state.connected && state.injected) {
             console.log('检测到已恢复的 WhatsApp 登录，继续载入群组...');
             await handleClientReady();
         }
-    } catch {}
+    } catch (error) {
+        if (/超时|Target closed|Session closed|Protocol error|detached Frame|Execution context was destroyed/i.test(error?.message || String(error))) {
+            recoverDisconnectedClient('隐藏 WhatsApp 页面无响应').catch(() => {});
+        }
+    }
 }, 5000);
 
 client.on('disconnected', (reason) => {
@@ -990,6 +1011,10 @@ app.post('/api/refresh-qr', async (req, res) => {
         io.emit('status', { connected: false, message: '正在生成新二维码...' });
         res.json({ ok: true });
     } catch (error) {
+        if (/超时|Target closed|Session closed|Protocol error|页面尚未恢复/i.test(error?.message || String(error))) {
+            recoverDisconnectedClient('二维码页面无响应').catch(() => {});
+            return res.json({ ok: true, recovering: true, message: '二维码后台正在恢复，请稍候' });
+        }
         res.status(500).json({ error: '刷新二维码失败：' + (error?.message || String(error)) });
     }
 });
