@@ -164,6 +164,10 @@ function applyConnectionStatus(data) {
         document.getElementById('qrSection').style.display = 'block';
         document.getElementById('mainApp').style.display = 'none';
         logoutBtn.style.display = 'none';
+        if (data.hasQr === false) {
+            document.getElementById('qrContainer').innerHTML = '<div class="loading">正在生成二维码，请不要扫描旧二维码...</div>';
+            document.getElementById('refreshQrBtn').disabled = true;
+        }
         if (!qrWaitStartedAt) qrWaitStartedAt = Date.now();
         document.getElementById('qrHint').textContent = data.hasQr
             ? '二维码已生成。扫描后如果手机出现“设备名称”，请输入 Railway 群发工具并按“保存”。'
