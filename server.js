@@ -819,7 +819,17 @@ app.post('/api/refresh-qr', async (req, res) => {
     }
     try {
         lastQrImage = null;
-        await withTimeout(client.cancelPairingCode(), 30000, '刷新二维码');
+        await withTimeout(client.pupPage.evaluate(() => {
+            if (window.codeInterval) {
+                clearInterval(window.codeInterval);
+                window.codeInterval = undefined;
+            }
+            window.require('WAWebLaunchSocketUtils').refreshQR();
+            Promise.resolve(
+                window.require('WAWebAltDeviceLinkingApi').initializeQRLinking()
+            ).catch(() => {});
+            return true;
+        }), 10000, '刷新二维码');
         io.emit('status', { connected: false, message: '正在生成新二维码...' });
         res.json({ ok: true });
     } catch (error) {
