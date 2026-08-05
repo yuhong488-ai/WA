@@ -45,7 +45,7 @@ for (const [key, value] of Object.entries(envConfig)) {
 }
 const PORT = Number(process.env.PORT || config.port || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
-const WA_CLIENT_ID = config.whatsappClientId || 'codex';
+const WA_CLIENT_ID = process.env.WA_CLIENT_ID || config.whatsappClientId || 'codex';
 const INSTANCE_NAME = process.env.INSTANCE_NAME || (HOST === '0.0.0.0' ? 'Railway 云端设备' : '本地设备');
 const ERROR_LOG = dataPath('error.log');
 
