@@ -8,6 +8,8 @@ let uploadedFiles = [];
 let voiceFile = null;
 let isSending = false;
 let wasConnected = false;
+let qrPollTimer = null;
+let qrWaitStartedAt = null;
 
 const FAMILY_NAMES = new Set('刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆'.split(''));
 const _FAMILY_RE = /[刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆][\u4e00-\u9fff]{1,2}/g;
@@ -43,6 +45,8 @@ socket.on('qr', (qrImage) => {
     document.getElementById('refreshQrBtn').disabled = false;
     document.getElementById('qrSection').style.display = 'block';
     document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('resetSessionBtn').style.display = 'none';
+    document.getElementById('qrHint').textContent = '二维码已生成，请用手机 WhatsApp → 已连接的设备扫描。';
 });
 
 async function refreshQrNow() {
@@ -117,6 +121,9 @@ async function loadLatestQr() {
         const data = await res.json();
         if (data.qr) {
             document.getElementById('qrContainer').innerHTML = `<img src="${data.qr}" alt="QR Code">`;
+            document.getElementById('refreshQrBtn').disabled = false;
+            document.getElementById('resetSessionBtn').style.display = 'none';
+            document.getElementById('qrHint').textContent = '二维码已生成，请尽快扫描。';
         }
     } catch (e) {
         console.error('loadLatestQr error', e);
@@ -149,6 +156,26 @@ function applyConnectionStatus(data) {
         bar.className = 'status disconnected';
         document.getElementById('qrSection').style.display = 'block';
         document.getElementById('mainApp').style.display = 'none';
+        if (!qrWaitStartedAt) qrWaitStartedAt = Date.now();
+        document.getElementById('qrHint').textContent = data.message || '正在连接 WhatsApp...';
+        document.getElementById('resetSessionBtn').style.display = (Date.now() - qrWaitStartedAt > 90000 && !data.hasQr) ? 'inline-block' : 'none';
+    }
+}
+
+async function resetSession() {
+    if (!window.confirm('这只会重置当前网址的 WhatsApp 登录资料，并生成新的二维码。确定继续吗？')) return;
+    const button = document.getElementById('resetSessionBtn');
+    button.disabled = true;
+    document.getElementById('qrContainer').innerHTML = '<div class="loading">正在重置登录并生成二维码...</div>';
+    try {
+        const response = await fetch('/api/reset-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '重置失败');
+        qrWaitStartedAt = Date.now();
+        document.getElementById('qrHint').textContent = data.message || '正在生成二维码...';
+    } catch (error) {
+        document.getElementById('qrHint').textContent = error.message;
+        button.disabled = false;
     }
 }
 
@@ -170,6 +197,12 @@ async function syncConnectionStatus() {
     } catch (e) {
         console.error('syncConnectionStatus error', e);
     }
+}
+
+if (!qrPollTimer) {
+    qrPollTimer = setInterval(() => {
+        if (!wasConnected) loadLatestQr();
+    }, 2500);
 }
 
 socket.on('status', applyConnectionStatus);

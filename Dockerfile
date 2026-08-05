@@ -4,6 +4,8 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     DATA_DIR=/data \
+    INSTANCE_NAME="Railway 云端设备" \
+    WA_CLIENT_ID=railway \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 RUN apt-get update \

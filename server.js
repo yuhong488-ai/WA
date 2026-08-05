@@ -46,6 +46,7 @@ for (const [key, value] of Object.entries(envConfig)) {
 const PORT = Number(process.env.PORT || config.port || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const WA_CLIENT_ID = config.whatsappClientId || 'codex';
+const INSTANCE_NAME = process.env.INSTANCE_NAME || (HOST === '0.0.0.0' ? 'Railway 云端设备' : '本地设备');
 const ERROR_LOG = dataPath('error.log');
 
 process.on('uncaughtException', (e) => {
@@ -371,8 +372,10 @@ let labels = [];
 let communities = {};
 let sendCount = { date: '', count: 0 };
 let lastQrImage = null;
+let qrGeneratedAt = null;
 let contactStats = {};
 let isInitializing = false;
+let isRecoveringClient = false;
 
 async function cleanupClientAfterFailure() {
     try {
@@ -381,6 +384,30 @@ async function cleanupClientAfterFailure() {
     try {
         await client.destroy();
     } catch {}
+}
+
+async function recoverDisconnectedClient(reason) {
+    if (isRecoveringClient || isInitializing || isReady || shuttingDown) return;
+    isRecoveringClient = true;
+    console.log(`WhatsApp 自动恢复：${reason}`);
+    io.emit('status', { connected: false, message: 'WhatsApp 后台已断开，正在自动重启...' });
+    try {
+        await cleanupClientAfterFailure();
+    } finally {
+        isRecoveringClient = false;
+        setTimeout(initializeClient, 1000);
+    }
+}
+
+async function resetWhatsAppSession() {
+    if (isSendingNow) throw new Error('正在发送中，不能重置登录');
+    isReady = false;
+    lastQrImage = null;
+    qrGeneratedAt = null;
+    await cleanupClientAfterFailure();
+    fs.rmSync(WWEBJS_AUTH_DIR, { recursive: true, force: true });
+    clearChromiumProfileLocks();
+    setTimeout(initializeClient, 1000);
 }
 
 async function getChatsWithCompatibilityFallback() {
@@ -575,11 +602,13 @@ client.on('qr', async (qr) => {
         errorCorrectionLevel: 'M'
     });
     lastQrImage = qrImage;
+    qrGeneratedAt = new Date().toISOString();
     io.emit('qr', qrImage);
 });
 
 client.on('authenticated', () => {
     lastQrImage = null;
+    qrGeneratedAt = null;
     io.emit('status', { connected: false, message: '\u9a8c\u8bc1\u6210\u529f\uff0c\u6b63\u5728\u8fde\u63a5...' });
 });
 
@@ -593,6 +622,7 @@ async function handleClientReady() {
     const previousCommunities = communities;
     isReady = true;
     lastQrImage = null;
+    qrGeneratedAt = null;
     io.emit('status', { connected: true, groupCount: 0 });
     console.log('\u5df2\u8fde\u63a5\uff01\u6b63\u5728\u8f7d\u5165\u7fa4\u7ec4...');
     try {
@@ -757,7 +787,11 @@ async function handleClientReady() {
 // before its event bridge is attached. Detect that healthy state and finish
 // initialization so the UI does not remain stuck on an expired QR screen.
 setInterval(async () => {
-    if (isReady || !client.pupPage) return;
+    if (isReady) return;
+    if (!client.pupBrowser?.connected || !client.pupPage || client.pupPage.isClosed()) {
+        await recoverDisconnectedClient('隐藏浏览器已退出');
+        return;
+    }
     try {
         const state = await client.pupPage.evaluate(() => {
             const socket = window.require?.('WAWebSocketModel')?.Socket;
@@ -775,8 +809,9 @@ setInterval(async () => {
 
 client.on('disconnected', (reason) => {
     isReady = false;
-    console.log(`WhatsApp 已断开（${reason || '未知原因'}），保留当前隐藏浏览器等待恢复`);
-    io.emit('status', { connected: false, message: 'WhatsApp 暂时断开，正在等待恢复...' });
+    console.log(`WhatsApp 已断开（${reason || '未知原因'}），准备自动恢复`);
+    io.emit('status', { connected: false, message: 'WhatsApp 暂时断开，正在自动恢复...' });
+    setTimeout(() => recoverDisconnectedClient(reason || '连接中断'), 10000);
 });
 
 app.post('/api/compose', async (req, res) => {
@@ -863,11 +898,20 @@ app.get('/api/localip', (req, res) => {
 });
 
 app.get('/api/status', (req, res) => {
-    res.json({ connected: isReady, groupCount: groups.length, todayCount: getTodayCount(), hasQr: !!lastQrImage, isSending: isSendingNow });
+    res.json({
+        connected: isReady,
+        groupCount: groups.length,
+        todayCount: getTodayCount(),
+        hasQr: !!lastQrImage,
+        qrGeneratedAt,
+        instanceName: INSTANCE_NAME,
+        clientId: WA_CLIENT_ID,
+        isSending: isSendingNow
+    });
 });
 
 app.get('/api/qr', (req, res) => {
-    res.json({ qr: lastQrImage });
+    res.json({ qr: lastQrImage, generatedAt: qrGeneratedAt, instanceName: INSTANCE_NAME });
 });
 
 app.post('/api/pairing-code', async (req, res) => {
@@ -894,7 +938,8 @@ app.post('/api/pairing-code', async (req, res) => {
 app.post('/api/refresh-qr', async (req, res) => {
     if (isReady) return res.json({ ok: true, connected: true });
     if (!client.pupPage) {
-        return res.status(503).json({ error: 'WhatsApp 正在启动，请稍后再试' });
+        recoverDisconnectedClient('用户请求刷新二维码').catch(() => {});
+        return res.json({ ok: true, recovering: true, message: '后台正在自动恢复，请稍后读取二维码' });
     }
     try {
         lastQrImage = null;
@@ -913,6 +958,19 @@ app.post('/api/refresh-qr', async (req, res) => {
         res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: '刷新二维码失败：' + (error?.message || String(error)) });
+    }
+});
+
+app.post('/api/reset-session', async (req, res) => {
+    if (req.body?.confirm !== true) return res.status(400).json({ error: '请确认重置登录' });
+    if (isReady) return res.status(400).json({ error: '当前已经连接，无需重置登录' });
+    if (isRecoveringClient || isInitializing) return res.status(409).json({ error: '后台正在恢复，请稍后再试' });
+    try {
+        await resetWhatsAppSession();
+        io.emit('status', { connected: false, message: '登录资料已重置，正在生成二维码...' });
+        res.json({ ok: true, message: '已重置登录，正在生成二维码' });
+    } catch (error) {
+        res.status(500).json({ error: '重置登录失败：' + (error?.message || String(error)) });
     }
 });
 

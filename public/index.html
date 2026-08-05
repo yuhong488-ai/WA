@@ -20,6 +20,8 @@
   <p>用手机打开 WhatsApp → 已连接的设备 → 连接设备 → 扫描下方二维码</p>
   <div id="qrContainer"><div class="loading">正在生成二维码...</div></div>
   <button id="refreshQrBtn" class="btn-outline" type="button" onclick="refreshQrNow()">立即刷新二维码</button>
+  <button id="resetSessionBtn" class="btn-danger-outline" type="button" onclick="resetSession()" style="display:none">登录资料失效？重置并生成二维码</button>
+  <div id="qrHint" class="qr-hint"></div>
   <div class="pairing-box">
     <button class="btn-outline" type="button" onclick="togglePairingBox()">无法扫码？改用手机号连接</button>
     <div id="pairingForm" style="display:none">
