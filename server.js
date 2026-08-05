@@ -483,7 +483,34 @@ function withTimeout(promise, ms, label) {
 
 function isWhatsAppPageError(error) {
     const message = error?.message || String(error);
-    return /detached Frame|Execution context was destroyed|Target closed|Session closed|Protocol error/i.test(message);
+    return /detached Frame|Execution context was destroyed|Target closed|Session closed|Protocol error|页面尚未恢复/i.test(message);
+}
+
+async function waitForWhatsAppPageReady(timeoutMs = 45000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const page = client.pupPage;
+            if (page && !page.isClosed()) {
+                const ready = await withTimeout(page.evaluate(() => {
+                    const socket = window.require?.('WAWebSocketModel')?.Socket;
+                    return document.readyState === 'complete'
+                        && typeof window.WWebJS !== 'undefined'
+                        && socket?.state === 'CONNECTED'
+                        && socket?.hasSynced === true;
+                }), 5000, '检查 WhatsApp 页面');
+                if (ready) {
+                    if (!isReady) {
+                        isReady = true;
+                        io.emit('status', { connected: true, groupCount: groups.length, message: 'WhatsApp 已恢复连接' });
+                    }
+                    return;
+                }
+            }
+        } catch {}
+        await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    throw new Error('WhatsApp 页面尚未恢复');
 }
 
 async function sleepWithStop(ms) {
@@ -497,14 +524,20 @@ async function sleepWithStop(ms) {
 }
 
 async function sendWithTimeout(targetId, content, options = {}) {
-    try {
-        return await withTimeout(client.sendMessage(targetId, content, options), 60000, 'WhatsApp 发送');
-    } catch (error) {
-        if (!isWhatsAppPageError(error)) throw error;
-        io.emit('status', { connected: false, message: 'WhatsApp 页面刷新中，正在重试...' });
-        await new Promise(resolve => setTimeout(resolve, 12000));
-        return withTimeout(client.sendMessage(targetId, content, options), 60000, 'WhatsApp 发送');
+    let lastError;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            await waitForWhatsAppPageReady();
+            return await withTimeout(client.sendMessage(targetId, content, options), 60000, 'WhatsApp 发送');
+        } catch (error) {
+            if (!isWhatsAppPageError(error)) throw error;
+            lastError = error;
+            isReady = false;
+            io.emit('status', { connected: false, message: `WhatsApp 页面刷新中，等待恢复（${attempt}/2）...` });
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
     }
+    throw lastError || new Error('WhatsApp 页面尚未恢复');
 }
 
 client.on('qr', async (qr) => {
