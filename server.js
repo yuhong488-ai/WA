@@ -376,6 +376,7 @@ let qrGeneratedAt = null;
 let contactStats = {};
 let isInitializing = false;
 let isRecoveringClient = false;
+let isLoggingOut = false;
 
 async function cleanupClientAfterFailure() {
     try {
@@ -387,7 +388,7 @@ async function cleanupClientAfterFailure() {
 }
 
 async function recoverDisconnectedClient(reason) {
-    if (isRecoveringClient || isInitializing || isReady || shuttingDown) return;
+    if (isRecoveringClient || isInitializing || isReady || isLoggingOut || shuttingDown) return;
     isRecoveringClient = true;
     console.log(`WhatsApp 自动恢复：${reason}`);
     io.emit('status', { connected: false, message: 'WhatsApp 后台已断开，正在自动重启...' });
@@ -408,6 +409,35 @@ async function resetWhatsAppSession() {
     fs.rmSync(WWEBJS_AUTH_DIR, { recursive: true, force: true });
     clearChromiumProfileLocks();
     setTimeout(initializeClient, 1000);
+}
+
+async function logoutWhatsAppSession() {
+    if (isSendingNow) throw new Error('正在发送中，不能退出登录');
+    if (isLoggingOut) throw new Error('正在退出登录，请稍候');
+
+    isLoggingOut = true;
+    isReady = false;
+    lastQrImage = null;
+    qrGeneratedAt = null;
+    let logoutError = null;
+    try {
+        if (client.pupPage && !client.pupPage.isClosed()) {
+            try {
+                await withTimeout(client.logout(), 30000, '退出 WhatsApp 登录');
+            } catch (error) {
+                // The hidden page may already be gone; clearing LocalAuth still signs out safely.
+                logoutError = error;
+                console.log('WhatsApp 主动退出提示：', error?.message || String(error));
+            }
+        }
+        await cleanupClientAfterFailure();
+        fs.rmSync(WWEBJS_AUTH_DIR, { recursive: true, force: true });
+        clearChromiumProfileLocks();
+    } finally {
+        isLoggingOut = false;
+        setTimeout(initializeClient, 1000);
+    }
+    return logoutError;
 }
 
 async function getChatsWithCompatibilityFallback() {
@@ -496,7 +526,7 @@ async function getContactsWithCompatibilityFallback() {
 }
 
 function initializeClient() {
-    if (isInitializing || isReady) return;
+    if (isInitializing || isReady || isLoggingOut) return;
     if (client.pupBrowser?.connected && client.pupPage && !client.pupPage.isClosed()) {
         console.log('WhatsApp 隐藏浏览器仍在运行，不重复启动');
         return;
@@ -615,7 +645,7 @@ client.on('authenticated', () => {
 client.on('ready', handleClientReady);
 
 async function handleClientReady() {
-    if (isReady) return;
+    if (isReady || isLoggingOut) return;
     const previousGroups = groups;
     const previousContacts = contacts;
     const previousLabels = labels;
@@ -808,10 +838,13 @@ setInterval(async () => {
 }, 5000);
 
 client.on('disconnected', (reason) => {
+    if (isLoggingOut) return;
     isReady = false;
     console.log(`WhatsApp 已断开（${reason || '未知原因'}），准备自动恢复`);
     io.emit('status', { connected: false, message: 'WhatsApp 暂时断开，正在自动恢复...' });
-    setTimeout(() => recoverDisconnectedClient(reason || '连接中断'), 10000);
+    setTimeout(() => {
+        if (!isLoggingOut) recoverDisconnectedClient(reason || '连接中断');
+    }, 10000);
 });
 
 app.post('/api/compose', async (req, res) => {
@@ -971,6 +1004,23 @@ app.post('/api/reset-session', async (req, res) => {
         res.json({ ok: true, message: '已重置登录，正在生成二维码' });
     } catch (error) {
         res.status(500).json({ error: '重置登录失败：' + (error?.message || String(error)) });
+    }
+});
+
+app.post('/api/logout', async (req, res) => {
+    if (req.body?.confirm !== true) return res.status(400).json({ error: '请确认退出登录' });
+    if (!isReady) return res.status(400).json({ error: '当前还没有登录 WhatsApp' });
+    if (isRecoveringClient || isInitializing || isLoggingOut) return res.status(409).json({ error: '后台正在处理连接，请稍后再试' });
+    try {
+        const logoutError = await logoutWhatsAppSession();
+        io.emit('status', { connected: false, message: '已退出登录，正在生成二维码...' });
+        res.json({
+            ok: true,
+            message: '已退出登录，正在生成二维码',
+            warning: logoutError ? 'WhatsApp 页面已断开，登录资料已清除' : undefined
+        });
+    } catch (error) {
+        res.status(500).json({ error: '退出登录失败：' + (error?.message || String(error)) });
     }
 });
 

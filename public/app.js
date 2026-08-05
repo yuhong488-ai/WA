@@ -45,6 +45,7 @@ socket.on('qr', (qrImage) => {
     document.getElementById('refreshQrBtn').disabled = false;
     document.getElementById('qrSection').style.display = 'block';
     document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('logoutBtn').style.display = 'none';
     document.getElementById('resetSessionBtn').style.display = 'none';
     document.getElementById('qrHint').textContent = '二维码已生成，请用手机 WhatsApp → 已连接的设备扫描。';
 });
@@ -132,12 +133,16 @@ async function loadLatestQr() {
 
 function applyConnectionStatus(data) {
     const bar = document.getElementById('statusBar');
+    const logoutBtn = document.getElementById('logoutBtn');
     if (data.connected) {
         wasConnected = true;
         bar.textContent = `已连接 ✓  ${data.groupCount} 个群组`;
         bar.className = 'status connected';
         document.getElementById('qrSection').style.display = 'none';
         document.getElementById('mainApp').style.display = 'block';
+        logoutBtn.style.display = 'inline-block';
+        logoutBtn.disabled = false;
+        logoutBtn.textContent = '退出 WhatsApp 登录';
         document.getElementById('groupCount').textContent = data.groupCount;
         renderPreview();
         updateDailyStats();
@@ -148,6 +153,7 @@ function applyConnectionStatus(data) {
         bar.className = 'status disconnected';
         document.getElementById('qrSection').style.display = 'none';
         document.getElementById('mainApp').style.display = 'block';
+        logoutBtn.style.display = 'none';
         const sendBtn = document.getElementById('sendBtn');
         sendBtn.disabled = true;
         if (!isSending) sendBtn.textContent = '等待 WhatsApp 恢复...';
@@ -156,6 +162,7 @@ function applyConnectionStatus(data) {
         bar.className = 'status disconnected';
         document.getElementById('qrSection').style.display = 'block';
         document.getElementById('mainApp').style.display = 'none';
+        logoutBtn.style.display = 'none';
         if (!qrWaitStartedAt) qrWaitStartedAt = Date.now();
         document.getElementById('qrHint').textContent = data.message || '正在连接 WhatsApp...';
         document.getElementById('resetSessionBtn').style.display = (Date.now() - qrWaitStartedAt > 90000 && !data.hasQr) ? 'inline-block' : 'none';
@@ -176,6 +183,33 @@ async function resetSession() {
     } catch (error) {
         document.getElementById('qrHint').textContent = error.message;
         button.disabled = false;
+    }
+}
+
+async function logoutWhatsApp() {
+    if (!window.confirm('退出后当前网址会回到二维码页面，需要重新扫描。确定退出 WhatsApp 登录吗？')) return;
+    const button = document.getElementById('logoutBtn');
+    button.disabled = true;
+    button.textContent = '正在退出...';
+    try {
+        const response = await fetch('/api/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: true })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '退出登录失败');
+        wasConnected = false;
+        qrWaitStartedAt = Date.now();
+        document.getElementById('qrContainer').innerHTML = '<div class="loading">正在生成二维码...</div>';
+        document.getElementById('qrHint').textContent = data.message || '正在生成二维码，请稍候...';
+        document.getElementById('qrSection').style.display = 'block';
+        document.getElementById('mainApp').style.display = 'none';
+        button.style.display = 'none';
+    } catch (error) {
+        button.disabled = false;
+        button.textContent = '退出 WhatsApp 登录';
+        window.alert(error.message);
     }
 }
 
