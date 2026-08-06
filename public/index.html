@@ -41,8 +41,8 @@
 
   <div class="stats-bar">
     <span>今日已发：<b id="todayCount">0</b> 条</span>
-    <span>每日上限：<b id="dailyLimit">50</b> 条</span>
-    <span>剩余：<b id="remaining">50</b> 条</span>
+    <span>每日上限：<b id="dailyLimit">100000</b> 条</span>
+    <span>剩余：<b id="remaining">100000</b> 条</span>
     <span>群组总数：<b id="groupCount">0</b> 个</span>
     <button id="logoutBtn" class="btn-danger-outline logout-btn" type="button" onclick="logoutWhatsApp()" style="display:none">退出 WhatsApp 登录</button>
   </div>
@@ -207,7 +207,7 @@
         </select>
       </label>
       <label>每日上限：
-        <input type="number" id="limitInput" value="50" min="1" max="100" style="width:60px"> 条
+        <input type="number" id="limitInput" value="100000" min="1" max="1000000" style="width:80px"> 条
       </label>
     </div>
 

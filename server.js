@@ -259,6 +259,7 @@ const app = express();
 const server = http.createServer(app);
 const APP_USERNAME = process.env.APP_USERNAME || 'admin';
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const DEFAULT_DAILY_LIMIT = 100000;
 
 function safeEqual(left, right) {
     const a = Buffer.from(String(left));
@@ -1163,16 +1164,20 @@ app.post('/api/stop-send', (req, res) => {
 app.post('/api/send', async (req, res) => {
     if (!isReady) return res.status(400).json({ error: 'WhatsApp \u672a\u8fde\u63a5' });
     if (isSendingNow) return res.status(400).json({ error: '\u6b63\u5728\u53d1\u9001\u4e2d\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u8bd5' });
-    const { targets, messageTemplate, mediaFile, mediaFiles, voiceFile, voiceMode = 'audio', minDelay = 5, maxDelay = 10, dailyLimit = 50 } = req.body;
+    const { targets, messageTemplate, mediaFile, mediaFiles, voiceFile, voiceMode = 'audio', minDelay = 5, maxDelay = 10, dailyLimit = DEFAULT_DAILY_LIMIT } = req.body;
+    const parsedDailyLimit = Number.parseInt(dailyLimit, 10);
+    const effectiveDailyLimit = Number.isFinite(parsedDailyLimit) && parsedDailyLimit > 0
+        ? parsedDailyLimit
+        : DEFAULT_DAILY_LIMIT;
     const attachedFiles = Array.isArray(mediaFiles) ? mediaFiles : (mediaFile ? [{ filename: mediaFile }] : []);
     if (!targets || targets.length === 0) return res.status(400).json({ error: '\u6ca1\u6709\u9009\u62e9\u53d1\u9001\u5bf9\u8c61' });
 
     const todayCount = getTodayCount();
-    if (todayCount >= dailyLimit) {
-        return res.status(400).json({ error: `\u4eca\u5929\u5df2\u53d1\u9001 ${todayCount} \u6761\uff0c\u5df2\u8fbe\u5230\u6bcf\u65e5\u4e0a\u9650 ${dailyLimit} \u6761` });
+    if (todayCount >= effectiveDailyLimit) {
+        return res.status(400).json({ error: `\u4eca\u5929\u5df2\u53d1\u9001 ${todayCount} \u6761\uff0c\u5df2\u8fbe\u5230\u6bcf\u65e5\u4e0a\u9650 ${effectiveDailyLimit} \u6761` });
     }
 
-    const remaining = dailyLimit - todayCount;
+    const remaining = effectiveDailyLimit - todayCount;
     const actualTargets = targets.slice(0, remaining);
 
     res.json({ message: '\u5f00\u59cb\u53d1\u9001', total: actualTargets.length });

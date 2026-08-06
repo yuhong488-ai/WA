@@ -1,4 +1,5 @@
 ﻿const socket = io();
+const DEFAULT_DAILY_LIMIT = 100000;
 let allGroups = [];
 let allContacts = [];
 let allLabels = [];
@@ -327,7 +328,7 @@ socket.on('sendComplete', (data) => {
 async function updateDailyStats() {
     const res = await fetch('/api/status');
     const data = await res.json();
-    const limit = parseInt(document.getElementById('limitInput').value) || 50;
+    const limit = parseInt(document.getElementById('limitInput').value, 10) || DEFAULT_DAILY_LIMIT;
     document.getElementById('todayCount').textContent = data.todayCount || 0;
     document.getElementById('dailyLimit').textContent = limit;
     document.getElementById('remaining').textContent = Math.max(0, limit - (data.todayCount || 0));
