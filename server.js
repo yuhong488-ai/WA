@@ -379,6 +379,8 @@ let isInitializing = false;
 let isRecoveringClient = false;
 let isLoggingOut = false;
 let authWaitTimer = null;
+let disconnectRecoveryTimer = null;
+let isLoadingReady = false;
 
 function clearAuthWaitTimer() {
     if (authWaitTimer) clearTimeout(authWaitTimer);
@@ -409,6 +411,10 @@ async function cleanupClientAfterFailure() {
 async function recoverDisconnectedClient(reason) {
     if (isRecoveringClient || isInitializing || isReady || isLoggingOut || shuttingDown) return;
     isRecoveringClient = true;
+    if (disconnectRecoveryTimer) {
+        clearTimeout(disconnectRecoveryTimer);
+        disconnectRecoveryTimer = null;
+    }
     console.log(`WhatsApp 自动恢复：${reason}`);
     io.emit('status', { connected: false, message: 'WhatsApp 后台已断开，正在自动重启...' });
     try {
@@ -684,7 +690,8 @@ client.on('auth_failure', (message) => {
 client.on('ready', handleClientReady);
 
 async function handleClientReady() {
-    if (isReady || isLoggingOut) return;
+    if (isReady || isLoadingReady || isLoggingOut) return;
+    isLoadingReady = true;
     clearAuthWaitTimer();
     const previousGroups = groups;
     const previousContacts = contacts;
@@ -850,6 +857,8 @@ async function handleClientReady() {
             await cleanupClientAfterFailure();
             setTimeout(initializeClient, 5000);
         }
+    } finally {
+        isLoadingReady = false;
     }
 }
 
@@ -883,12 +892,16 @@ setInterval(async () => {
 
 client.on('disconnected', (reason) => {
     clearAuthWaitTimer();
-    if (isLoggingOut) return;
+    if (isLoggingOut || isRecoveringClient || isInitializing || shuttingDown) return;
     isReady = false;
     console.log(`WhatsApp 已断开（${reason || '未知原因'}），准备自动恢复`);
     io.emit('status', { connected: false, message: 'WhatsApp 暂时断开，正在自动恢复...' });
-    setTimeout(() => {
-        if (!isLoggingOut) recoverDisconnectedClient(reason || '连接中断');
+    if (disconnectRecoveryTimer) clearTimeout(disconnectRecoveryTimer);
+    disconnectRecoveryTimer = setTimeout(() => {
+        disconnectRecoveryTimer = null;
+        if (!isLoggingOut && !isRecoveringClient && !isInitializing && !isReady && !shuttingDown) {
+            recoverDisconnectedClient(reason || '连接中断');
+        }
     }, 10000);
 });
 
