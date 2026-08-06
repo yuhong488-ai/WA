@@ -1184,6 +1184,11 @@ app.post('/api/send', async (req, res) => {
         try {
             for (let i = 0; i < actualTargets.length; i++) {
                 if (stopSendingRequested) break;
+                if (!isReady) {
+                    stopSendingRequested = true;
+                    io.emit('status', { connected: false, message: 'WhatsApp 已断开，已停止本次发送，请重新连接后再发' });
+                    break;
+                }
                 const target = actualTargets[i];
                 const message = messageTemplate.replace(/\{\u540d\u5b57\}/g, target.displayName || '');
 

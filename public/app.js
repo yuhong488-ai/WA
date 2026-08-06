@@ -42,6 +42,7 @@ function extractDisplayName(groupName) {
 
 // Socket events
 socket.on('qr', (qrImage) => {
+    wasConnected = false;
     document.getElementById('qrContainer').innerHTML = `<img src="${qrImage}" alt="QR Code">`;
     document.getElementById('refreshQrBtn').disabled = false;
     document.getElementById('qrSection').style.display = 'block';
@@ -149,7 +150,7 @@ function applyConnectionStatus(data) {
         updateDailyStats();
         initAI();
         loadPresets();
-    } else if (wasConnected) {
+    } else if (wasConnected && data.hasQr !== true) {
         bar.textContent = data.message || 'WhatsApp 正在恢复连接，请稍候...';
         bar.className = 'status disconnected';
         document.getElementById('qrSection').style.display = 'none';
@@ -159,6 +160,7 @@ function applyConnectionStatus(data) {
         sendBtn.disabled = true;
         if (!isSending) sendBtn.textContent = '等待 WhatsApp 恢复...';
     } else {
+        if (data.hasQr === true) wasConnected = false;
         bar.textContent = data.message || '未连接';
         bar.className = 'status disconnected';
         document.getElementById('qrSection').style.display = 'block';
