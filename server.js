@@ -71,8 +71,10 @@ function findBrowser() {
         `${pf86}\\Microsoft\\Edge\\Application\\msedge.exe`,
         `${pf}\\Microsoft\\Edge\\Application\\msedge.exe`,
         local ? `${local}\\Microsoft\\Edge\\Application\\msedge.exe` : '',
-        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+        // The visible control page may run in Edge, but whatsapp-web.js is
+        // more stable with the system Chrome binary for its hidden session.
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
         '/Applications/Chromium.app/Contents/MacOS/Chromium',
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
