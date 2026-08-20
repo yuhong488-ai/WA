@@ -312,8 +312,11 @@ socket.on('sendComplete', (data) => {
     document.getElementById('stopBtn').style.display = 'none';
     const log = document.getElementById('progressLog');
     const item = document.createElement('div');
-    item.className = 'log-item success';
-    item.textContent = data.stopped ? `已停止。本次成功发送 ${data.total} 条消息` : `完成！共发送 ${data.total} 条消息`;
+    item.className = data.failed ? 'log-item fail' : 'log-item success';
+    const failedText = data.failed ? `，失败 ${data.failed} 条（失败对象会在上方逐条显示）` : '';
+    item.textContent = data.stopped
+        ? `已停止。本次成功发送 ${data.total} 条消息${failedText}`
+        : `完成！共发送 ${data.total} 条消息${failedText}`;
     log.prepend(item);
     document.getElementById('todayCount').textContent = data.todayCount;
     updateDailyStats();
@@ -555,7 +558,29 @@ async function matchNames() {
         body: JSON.stringify({ names })
     });
     const results = await res.json();
-    renderMatchResults(results);
+    renderMatchResults(combineMatchedDisplayNames(results));
+}
+
+function combineMatchedDisplayNames(results) {
+    const namesByGroup = new Map();
+    results.forEach(result => {
+        if (result.matches?.length !== 1) return;
+        const groupId = result.matches[0].id;
+        const names = namesByGroup.get(groupId) || [];
+        names.push(result.customName || result.shortName || '');
+        namesByGroup.set(groupId, names);
+    });
+
+    results.forEach(result => {
+        if (result.matches?.length !== 1) return;
+        const names = namesByGroup.get(result.matches[0].id) || [];
+        if (names.length < 2) return;
+        const combined = combineDisplayNames(...names);
+        result.customName = combined;
+        result.shortName = combined;
+        result.matchRule = `${result.matchRule || '完整姓名'} · 同群称呼已合并`;
+    });
+    return results;
 }
 
 function renderMatchResults(results) {
@@ -584,6 +609,7 @@ function renderMatchResults(results) {
             <div style="display:flex;justify-content:space-between;align-items:center">
                 <span class="match-fullname">${r.fullName}</span>${badge}
             </div>
+            <div style="color:#777;font-size:12px;margin-top:4px">匹配规则：${r.matchRule || '完整姓名'}</div>
             <div class="match-shortname">
                 发送时称呼：<input type="text" id="name_${i}" value="${r.customName}" placeholder="称呼">
                 <span style="color:#999;font-size:12px">（可修改）</span>
@@ -623,6 +649,14 @@ function updateMatchSelection(i) {
     }
 }
 
+function combineDisplayNames(...values) {
+    const names = values
+        .flatMap(value => String(value || '').split(/[、,，&和\n]+/))
+        .map(value => value.trim())
+        .filter(Boolean);
+    return [...new Set(names)].join('、');
+}
+
 function addMatchesToTargets(results) {
     results.forEach((r, i) => {
         const item = document.querySelector(`[data-index="${i}"]`);
@@ -633,7 +667,11 @@ function addMatchesToTargets(results) {
             name: item.dataset.groupName,
             displayName: customName
         };
-        if (!selectedTargets.find(t => t.id === target.id)) {
+        const existingTarget = selectedTargets.find(t => t.id === target.id);
+        if (existingTarget) {
+            // 同一个群里有多个人时合并称呼，群组只保留一个发送对象。
+            existingTarget.displayName = combineDisplayNames(existingTarget.displayName, target.displayName);
+        } else {
             selectedTargets.push(target);
         }
     });

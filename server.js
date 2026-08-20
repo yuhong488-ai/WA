@@ -71,10 +71,9 @@ function findBrowser() {
         `${pf86}\\Microsoft\\Edge\\Application\\msedge.exe`,
         `${pf}\\Microsoft\\Edge\\Application\\msedge.exe`,
         local ? `${local}\\Microsoft\\Edge\\Application\\msedge.exe` : '',
-        // The visible control page may run in Edge, but whatsapp-web.js is
-        // more stable with the system Chrome binary for its hidden session.
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Users/gracetan/.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.31/chrome-headless-shell-mac-arm64/chrome-headless-shell',
         '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         '/Applications/Chromium.app/Contents/MacOS/Chromium',
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
@@ -248,6 +247,22 @@ async function sendVoiceByMode(target, filePath, mode, prefix = '') {
         console.log(`  \uD83C\uDFA4 ${prefix}\u8bed\u97f3\u6ce1\u6ce1\u5df2\u4e0a\u4f20\uff1a${target.name} ${sentVoice?.id?._serialized || ''}`);
     }
 }
+
+// Loading a large video for every target creates a fresh Base64 string on
+// every loop iteration. A 58 MB upload can therefore grow the Node heap until
+// the sender crashes. Keep one MessageMedia instance per file for the whole
+// send task and reuse it for each target; the local array is released when the
+// task finishes.
+function prepareMediaForSend(attachedFiles) {
+    return attachedFiles.map((attached) => {
+        const filename = attached?.filename || attached;
+        const filePath = path.join(uploadDir, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`找不到上传文件：${filename}`);
+        }
+        return { filename, filePath, media: MessageMedia.fromFilePath(filePath) };
+    });
+}
 function savePresets() { fs.writeFileSync(dataPath('presets.json'), JSON.stringify(presets, null, 2)); }
 function saveGroupsCache() {
     if (!groups.length) {
@@ -369,11 +384,20 @@ const client = new Client({
 let isReady = false;
 let isSendingNow = false;
 let stopSendingRequested = false;
-let groups = [];
-let contacts = [];
-let labels = [];
-let communities = {};
-let sendCount = { date: '', count: 0 };
+// 先用上次成功同步的缓存提供匹配结果，WhatsApp 页面恢复后再用实时数据覆盖。
+// 这样服务重启/二维码恢复期间，“粘贴名字”不会暂时变成空列表。
+let groups = groupsCache?.groups || [];
+let contacts = groupsCache?.contacts || [];
+let labels = groupsCache?.labels || [];
+let communities = groupsCache?.communities || {};
+let sendCount = readJson('send-count.json', { date: '', count: 0 });
+if (!sendCount || typeof sendCount !== 'object' || typeof sendCount.date !== 'string' || !Number.isFinite(Number(sendCount.count))) {
+    sendCount = { date: '', count: 0 };
+}
+
+function saveSendCount() {
+    try { fs.writeFileSync(dataPath('send-count.json'), JSON.stringify(sendCount)); } catch {}
+}
 let lastQrImage = null;
 let qrGeneratedAt = null;
 let contactStats = {};
@@ -576,6 +600,7 @@ function getTodayCount() {
     const today = new Date().toISOString().split('T')[0];
     if (sendCount.date !== today) {
         sendCount = { date: today, count: 0 };
+        saveSendCount();
     }
     return sendCount.count;
 }
@@ -584,6 +609,7 @@ function incrementCount() {
     const today = new Date().toISOString().split('T')[0];
     if (sendCount.date !== today) sendCount = { date: today, count: 0 };
     sendCount.count++;
+    saveSendCount();
 }
 
 function withTimeout(promise, ms, label) {
@@ -640,7 +666,17 @@ async function sendWithTimeout(targetId, content, options = {}) {
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
             await waitForWhatsAppPageReady();
-            return await withTimeout(client.sendMessage(targetId, content, options), 60000, 'WhatsApp 发送');
+            // whatsapp-web.js 默认只把消息放进页面队列就返回。强制等待发送结果，
+            // 并检查返回值，避免“界面显示成功、实际没有找到目标群组”的假成功。
+            const sentMessage = await withTimeout(
+                client.sendMessage(targetId, content, { ...options, waitUntilMsgSent: true }),
+                60000,
+                'WhatsApp 发送'
+            );
+            if (!sentMessage?.id?._serialized) {
+                throw new Error(`WhatsApp 找不到发送目标：${targetId}`);
+            }
+            return sentMessage;
         } catch (error) {
             if (!isWhatsAppPageError(error)) throw error;
             lastError = error;
@@ -1115,22 +1151,108 @@ app.post('/api/refresh', async (req, res) => {
     }
 });
 
+// 粘贴名字匹配：中文姓名必须同时命中“姓氏 + 名字”，避免只用名字末尾造成误匹配。
+// 群名经常把同姓兄弟姐妹的姓氏只写一次（例如“陈乔邤 ... 乔恩”），
+// 因此除了完整姓名连续出现，也允许姓氏在前、名字在后的组合匹配。
+const MATCH_CHINESE_SURNAMES = new Set(
+    '刘黄陈李张王林吴杨周赵许郑孙何马朱胡江高钟曾邓彭谢萧苏叶吕白方余邱潘廖毛沈曹徐汪范熊姜冯汤钱戴韩侯龙邵罗邢程傅郭蔡梁宋谭魏蒋卢庄游颜严杜雷龚洪贾柯韦秦赖尹孟丁薛阮段纪欧武伍连翁温黎关符应甘袁莫石金安唐康覃卓向易岳文贺俞鲁万田古尤辜冼麦丘左涂祝阳邝陆蓝邹阙乔倪詹简佘邝'.split('')
+);
+const MATCH_COMPOUND_SURNAMES = [
+    '欧阳', '司马', '上官', '诸葛', '夏侯', '东方', '皇甫', '尉迟', '公孙', '慕容',
+    '令狐', '钟离', '长孙', '鲜于', '宇文', '轩辕', '百里', '南宫', '独孤', '闻人',
+    '司徒', '司空', '赫连', '完颜', '呼延', '端木', '拓跋', '濮阳', '淳于', '单于',
+    '太史', '申屠', '公羊', '仲孙', '谷梁', '梁丘', '左丘', '东郭', '西门', '第五'
+].sort((a, b) => b.length - a.length);
+
+function normalizeMatchText(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .toLocaleLowerCase()
+        .replace(/[\u200b-\u200d\uFEFF]/g, '')
+        .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function parsePastedName(value) {
+    const raw = String(value || '').trim();
+    const compact = normalizeMatchText(raw);
+    const chineseRuns = raw.match(/[\u3400-\u4dbf\u4e00-\u9fff]+/g) || [];
+    const chineseName = chineseRuns.find(run => Array.from(run).length >= 2) || '';
+
+    if (chineseName) {
+        const firstChar = Array.from(chineseName)[0];
+        const surname = MATCH_COMPOUND_SURNAMES.find(candidate => chineseName.startsWith(candidate))
+            || (MATCH_CHINESE_SURNAMES.has(firstChar) ? firstChar : '');
+        const givenName = chineseName.slice(surname.length);
+        return {
+            raw,
+            compact,
+            nameText: normalizeMatchText(chineseName),
+            surname: normalizeMatchText(surname),
+            givenName: normalizeMatchText(givenName),
+            customName: givenName || chineseName,
+            isChinese: true,
+            // 两字输入若首字不是已知姓氏，不能把它当作“名字末尾”去匹配。
+            matchable: Boolean(surname && givenName)
+        };
+    }
+
+    // 英文姓名保留完整姓名匹配，并支持群名中只是加了空格/标点的情况。
+    const words = raw.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const customName = words.length > 1 ? words.slice(0, -1).join(' ') : (words[0] || raw);
+    return { raw, compact, nameText: compact, surname: '', givenName: '', customName, isChinese: false, words };
+}
+
+function getNameMatchScore(parsed, targetName) {
+    const target = normalizeMatchText(targetName);
+    if (!target || !parsed.nameText) return null;
+    if (parsed.isChinese && parsed.matchable === false) return null;
+
+    if (target.includes(parsed.nameText)) return { score: 100, mode: 'full-name' };
+
+    if (parsed.isChinese && parsed.surname && parsed.givenName) {
+        const surnameIndex = target.indexOf(parsed.surname);
+        const givenIndex = surnameIndex < 0 ? -1 : target.indexOf(parsed.givenName, surnameIndex + parsed.surname.length);
+        if (surnameIndex >= 0 && givenIndex >= 0) return { score: 90, mode: 'surname-given' };
+        return null;
+    }
+
+    // 非中文姓名只在所有姓名词都存在时匹配，不再退回只看最后两个字/词。
+    if (!parsed.isChinese && parsed.words?.length > 1) {
+        const wordMatches = parsed.words.every(word => target.includes(normalizeMatchText(word)));
+        if (wordMatches) return { score: 85, mode: 'all-name-words' };
+    }
+
+    return null;
+}
+
 app.post('/api/match-names', (req, res) => {
-    const { names } = req.body;
-    if (!names) return res.json([]);
+    const names = Array.isArray(req.body?.names) ? req.body.names : [];
     const results = names
-        .filter(n => n.trim())
+        .filter(name => String(name || '').trim())
         .map(fullName => {
-            const name = fullName.trim();
-            const shortName = name.length >= 3 ? name.slice(1) : name;
-            const groupMatches = groups
-                .filter(g => g.name.includes(name) || g.name.includes(shortName))
-                .map(g => ({ ...g, type: 'group' }));
-            const contactMatches = contacts
-                .filter(c => c.name.includes(name) || c.name.includes(shortName))
-                .map(c => ({ ...c, type: 'contact' }));
-            const matches = [...groupMatches, ...contactMatches];
-            return { fullName: name, shortName, customName: shortName, matches, selectedMatch: matches.length === 1 ? matches[0] : null };
+            const parsed = parsePastedName(fullName);
+            const candidates = [
+                ...groups.map(g => ({ ...g, type: 'group' })),
+                ...contacts.map(c => ({ ...c, type: 'contact' }))
+            ];
+            const scoredMatches = candidates
+                .map(candidate => {
+                    const match = getNameMatchScore(parsed, candidate.name);
+                    return match ? { candidate, ...match } : null;
+                })
+                .filter(Boolean)
+                .sort((a, b) => b.score - a.score || String(a.candidate.name).localeCompare(String(b.candidate.name), 'zh'));
+            const matches = scoredMatches.map(({ candidate, mode }) => ({ ...candidate, matchMode: mode }));
+            return {
+                fullName: parsed.raw,
+                shortName: parsed.customName,
+                customName: parsed.customName,
+                matchRule: parsed.isChinese
+                    ? (parsed.matchable === false ? '请粘贴完整中文姓名（含姓氏）' : '姓氏 + 名字')
+                    : '完整姓名',
+                matches,
+                selectedMatch: matches.length === 1 ? matches[0] : null
+            };
         });
     res.json(results);
 });
@@ -1184,8 +1306,26 @@ app.post('/api/send', async (req, res) => {
     const effectiveDailyLimit = Number.isFinite(parsedDailyLimit) && parsedDailyLimit > 0
         ? parsedDailyLimit
         : DEFAULT_DAILY_LIMIT;
+    const messageTemplateText = typeof messageTemplate === 'string' ? messageTemplate : '';
     const attachedFiles = Array.isArray(mediaFiles) ? mediaFiles : (mediaFile ? [{ filename: mediaFile }] : []);
     if (!targets || targets.length === 0) return res.status(400).json({ error: '\u6ca1\u6709\u9009\u62e9\u53d1\u9001\u5bf9\u8c61' });
+    if (!messageTemplateText.trim() && attachedFiles.length === 0 && !voiceFile) {
+        return res.status(400).json({ error: '\u8bf7\u5148\u8f93\u5165\u6d88\u606f\u5185\u5bb9' });
+    }
+
+    const availableTargetIds = new Set([
+        ...groups.map(group => group.id),
+        ...contacts.map(contact => contact.id)
+    ].filter(Boolean));
+    const unavailableTargets = targets
+        .filter(target => !target?.id || !availableTargetIds.has(target.id))
+        .map(target => ({ id: target?.id || '', name: target?.name || '未命名对象' }));
+    if (unavailableTargets.length) {
+        return res.status(400).json({
+            error: `有 ${unavailableTargets.length} 个发送对象已不在当前 WhatsApp 列表，请先刷新群组后再发送`,
+            unavailableTargets
+        });
+    }
 
     const todayCount = getTodayCount();
     if (todayCount >= effectiveDailyLimit) {
@@ -1201,7 +1341,18 @@ app.post('/api/send', async (req, res) => {
     stopSendingRequested = false;
     (async () => {
         let sentCount = 0;
+        let failedCount = 0;
+        const failures = [];
+        let preparedMedia = [];
         try {
+            try {
+                preparedMedia = prepareMediaForSend(attachedFiles);
+            } catch (error) {
+                const errMsg = error?.message || String(error);
+                fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] media prepare failed: ${errMsg}\n`);
+                io.emit('sendComplete', { total: 0, stopped: true, error: errMsg, todayCount: getTodayCount() });
+                return;
+            }
             for (let i = 0; i < actualTargets.length; i++) {
                 if (stopSendingRequested) break;
                 if (!isReady) {
@@ -1210,15 +1361,13 @@ app.post('/api/send', async (req, res) => {
                     break;
                 }
                 const target = actualTargets[i];
-                const message = messageTemplate.replace(/\{\u540d\u5b57\}/g, target.displayName || '');
+                const message = messageTemplateText.replace(/\{\u540d\u5b57\}/g, target.displayName || '');
 
                 try {
-                    if (attachedFiles.length) {
-                        for (let fileIndex = 0; fileIndex < attachedFiles.length; fileIndex++) {
-                            const attached = attachedFiles[fileIndex];
-                            const filePath = path.join(uploadDir, attached.filename || attached);
-                            const media = MessageMedia.fromFilePath(filePath);
-                            const isLastMedia = fileIndex === attachedFiles.length - 1;
+                    if (preparedMedia.length) {
+                        for (let fileIndex = 0; fileIndex < preparedMedia.length; fileIndex++) {
+                            const media = preparedMedia[fileIndex].media;
+                            const isLastMedia = fileIndex === preparedMedia.length - 1;
                             const canUseCaption = !voiceFile && isLastMedia && message;
                             await sendWithTimeout(target.id, media, canUseCaption ? { caption: message } : {});
                         }
@@ -1227,7 +1376,7 @@ app.post('/api/send', async (req, res) => {
                         let filePath = path.join(uploadDir, voiceFile);
                         await sendVoiceByMode(target, filePath, voiceMode);
                         if (message) await sendWithTimeout(target.id, message);
-                    } else if (!attachedFiles.length) {
+                    } else if (!preparedMedia.length) {
                         await sendWithTimeout(target.id, message);
                     }
                     incrementCount();
@@ -1235,6 +1384,8 @@ app.post('/api/send', async (req, res) => {
                     io.emit('sendProgress', { index: i + 1, total: actualTargets.length, name: target.name, success: true, todayCount: getTodayCount() });
                 } catch (e) {
                     const errMsg = e?.message || String(e);
+                    failedCount++;
+                    failures.push({ id: target.id, name: target.name, error: errMsg });
                     fs.appendFileSync(ERROR_LOG, `[${new Date().toISOString()}] sendMessage failed: ${e?.stack || errMsg}\n`);
                     io.emit('sendProgress', { index: i + 1, total: actualTargets.length, name: target.name, success: false, error: errMsg });
                     if (isWhatsAppPageError(e)) {
@@ -1249,8 +1400,15 @@ app.post('/api/send', async (req, res) => {
                     await sleepWithStop(delay);
                 }
             }
-            io.emit('sendComplete', { total: sentCount, stopped: stopSendingRequested, todayCount: getTodayCount() });
+            io.emit('sendComplete', {
+                total: sentCount,
+                failed: failedCount,
+                failures: failures.slice(0, 50),
+                stopped: stopSendingRequested,
+                todayCount: getTodayCount()
+            });
         } finally {
+            preparedMedia = [];
             isSendingNow = false;
             stopSendingRequested = false;
         }
@@ -1322,22 +1480,21 @@ cron.schedule('* * * * *', async () => {
         io.emit('schedules', schedules);
         console.log(`\u6267\u884c\u5b9a\u65f6\u4efb\u52a1\uff1a${task.name}\uff0c\u5171 ${task.targets.length} \u4e2a\u5bf9\u8c61`);
         let successCount = 0;
+        let preparedMedia = [];
         try {
+            const taskAttachedFiles = Array.isArray(task.mediaFiles)
+                ? task.mediaFiles
+                : (task.mediaFile ? [{ filename: task.mediaFile }] : []);
+            preparedMedia = prepareMediaForSend(taskAttachedFiles);
             for (let i = 0; i < task.targets.length; i++) {
                 if (stopSendingRequested) break;
                 const target = task.targets[i];
                 const message = task.messageTemplate.replace(/\{\u540d\u5b57\}/g, target.displayName || '');
                 try {
-                    const attachedFiles = Array.isArray(task.mediaFiles)
-                        ? task.mediaFiles
-                        : (task.mediaFile ? [{ filename: task.mediaFile }] : []);
-                    if (attachedFiles.length) {
-                        for (let fileIndex = 0; fileIndex < attachedFiles.length; fileIndex++) {
-                            const attached = attachedFiles[fileIndex];
-                            const filePath = path.join(uploadDir, attached.filename || attached);
-                            if (!fs.existsSync(filePath)) continue;
-                            const media = MessageMedia.fromFilePath(filePath);
-                            const isLastMedia = fileIndex === attachedFiles.length - 1;
+                    if (preparedMedia.length) {
+                        for (let fileIndex = 0; fileIndex < preparedMedia.length; fileIndex++) {
+                            const media = preparedMedia[fileIndex].media;
+                            const isLastMedia = fileIndex === preparedMedia.length - 1;
                             const canUseCaption = !task.voiceFile && isLastMedia && message;
                             await sendWithTimeout(target.id, media, canUseCaption ? { caption: message } : {});
                         }
@@ -1350,7 +1507,7 @@ cron.schedule('* * * * *', async () => {
                         } else {
                             await sendWithTimeout(target.id, message);
                         }
-                    } else if (!attachedFiles.length) {
+                    } else if (!preparedMedia.length) {
                         await sendWithTimeout(target.id, message);
                     }
                     incrementCount();
@@ -1376,7 +1533,13 @@ cron.schedule('* * * * *', async () => {
             io.emit('schedules', schedules);
             console.log(`\u5b9a\u65f6\u4efb\u52a1\u5b8c\u6210\uff1a${task.name}\uff0c\u6210\u529f ${successCount}/${task.targets.length}`);
             io.emit('scheduleComplete', { taskId: task.id, name: task.name, successCount, total: task.targets.length });
+        } catch (e) {
+            task.status = 'stopped';
+            saveSchedules();
+            console.error(`\u5b9a\u65f6\u4efb\u52a1\u51c6\u5907\u5931\u8d25：${task.name} - ${e?.message || String(e)}`);
+            io.emit('scheduleComplete', { taskId: task.id, name: task.name, successCount, total: task.targets.length, error: e?.message || String(e) });
         } finally {
+            preparedMedia = [];
             isSendingNow = false;
             stopSendingRequested = false;
         }
